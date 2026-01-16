@@ -8,39 +8,30 @@ export default function Home() {
   const [error, setError] = useState<string>('')
 
   const generateAnimal = async () => {
-    console.log('=== Generate Animal Button Clicked ===')
     setLoading(true)
     setError('')
     setAnimal('')
     
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      console.log(`Build-time NEXT_PUBLIC_API_URL: ${process.env.NEXT_PUBLIC_API_URL}`)
-      console.log(`API URL: ${apiUrl}`)
-      console.log(`Calling: ${apiUrl}/generate-animal`)
+      console.log(`Calling API: ${apiUrl}/generate-animal`)
       
       const response = await fetch(`${apiUrl}/generate-animal`)
-      console.log(`Response status: ${response.status}`)
-      console.log(`Response ok: ${response.ok}`)
       
       if (!response.ok) {
         const errorText = await response.text()
-        console.error(`API Error Response: ${errorText}`)
+        console.error(`API Error (${response.status}):`, errorText)
         throw new Error(`Failed to generate animal: ${response.status}`)
       }
       
       const data = await response.json()
-      console.log('API Response data:', data)
       setAnimal(data.animal)
-      console.log(`Successfully set animal: ${data.animal}`)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred'
-      console.error('Error in generateAnimal:', errorMessage)
-      console.error('Full error object:', err)
+      console.error('Error:', errorMessage)
       setError(errorMessage)
     } finally {
       setLoading(false)
-      console.log('=== Generate Animal Request Completed ===')
     }
   }
 
