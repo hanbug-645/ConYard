@@ -1,0 +1,78 @@
+steps:
+  # Build backend
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/conyard/conyard-backend'
+      - './backend'
+    id: 'build-backend'
+
+  # Build frontend with API URL build argument
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_API_URL=${_NEXT_PUBLIC_API_URL}'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/conyard/conyard-frontend'
+      - './frontend'
+    id: 'build-frontend'
+
+  # Push backend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/conyard/conyard-backend'
+    id: 'push-backend'
+    waitFor: ['build-backend']
+
+  # Push frontend image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/conyard/conyard-frontend'
+    id: 'push-frontend'
+    waitFor: ['build-frontend']
+
+  # Deploy backend to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args:
+      - 'gcloud'
+      - 'run'
+      - 'deploy'
+      - 'conyard-backend'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/conyard/conyard-backend'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+    id: 'deploy-backend'
+    waitFor: ['push-backend']
+
+  # Deploy frontend to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    args:
+      - 'gcloud'
+      - 'run'
+      - 'deploy'
+      - 'conyard-frontend'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/conyard/conyard-frontend'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--port'
+      - '3000'
+    id: 'deploy-frontend'
+    waitFor: ['push-frontend', 'deploy-backend']
+
+substitutions:
+  _NEXT_PUBLIC_API_URL: 'https://conyard-backend-295972481727.us-central1.run.app'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
