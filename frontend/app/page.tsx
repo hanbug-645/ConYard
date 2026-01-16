@@ -15,6 +15,7 @@ export default function Home() {
     
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      console.log(`Build-time NEXT_PUBLIC_API_URL: ${process.env.NEXT_PUBLIC_API_URL}`)
       console.log(`API URL: ${apiUrl}`)
       console.log(`Calling: ${apiUrl}/generate-animal`)
       
