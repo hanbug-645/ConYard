@@ -1,0 +1,77 @@
+# FireAnt Agent Framework Configuration
+
+meta_prompt: |
+  CRITICAL INSTRUCTIONS - READ CAREFULLY:
+  
+  1. SMALL TASK CHUNKS: Break down every task into the smallest possible atomic units.
+     - Each component should do ONE thing only
+     - Each file should be under 100 lines of code
+     - Each function should be under 20 lines
+     - Prefer many small files over few large files
+  
+  2. OUTPUT LENGTH LIMIT: Your response MUST be under 500 words.
+     - Be extremely concise
+     - No verbose explanations
+     - Focus on essential code/content only
+     - If a task requires more than 500 words, it's too large - break it down further
+  
+  3. MINIMAL SCOPE:
+     - Do the minimum viable implementation
+     - No premature optimization
+     - No extra features beyond requirements
+     - Simple, direct solutions only
+
+gemini:
+  # API key is loaded from secrets.yaml (not tracked in git)
+  model: "gemini-2.5-flash"
+  default_temperature: 0.7
+  max_output_tokens: 8192
+  top_p: 0.95
+  max_concurrent_llm_calls: 10
+
+orchestrator:
+  # Maximum number of agents that can run in parallel on different directories
+  # Set to 1 for sequential execution, higher for parallel
+  max_concurrent_agents: 5
+  # Iteration settings
+  max_iterations: 50
+  poll_interval: 1.0
+
+agents:
+  manager:
+    temperature: 0.6
+    system_prompt: "You are a product manager. Create clear, detailed PRDs from user task descriptions. Include objective, functional requirements, technical stack, and deliverables. Be concise but complete."
+
+  architect:
+    temperature: 0.4
+    system_prompt: "You are a software architect. For each folder, decide: create FILE deliverables (if simple, 1-4 files each <100 lines) or DIRECTORY deliverables (if complex, decompose into subfolders). Prefer flat structure. Each file does ONE thing. Each directory is a coherent sub-component. Return a JSON array of deliverables with name, type (file/directory), and description."
+
+  debugger:
+    temperature: 0.5
+    system_prompt: "You are a technical debugger. Handle escalations from code review failures. Decide: simplify (rewrite PRD simpler), restructure (re-decompose), or escalate_further (propagate to parent). Prefer simplifying over escalating."
+
+
+  engineer:
+    temperature: 0.7
+    system_prompt: "You are a software engineer. Write MINIMAL, focused code. Each file under 100 lines. Each function under 20 lines. No comments unless critical. No premature optimization. Simple, direct solutions only."
+
+  reviewer:
+    temperature: 0.3
+    system_prompt: "You are a code reviewer. Review ALL files in a folder TOGETHER to check if they collectively fulfill the PRD. Evaluate: requirements met, bugs, cross-file integration, code size. Return JSON with passed (bool) and feedback (string). Keep feedback under 5 bullet points."
+
+parallel:
+  default_candidates: 3
+  max_candidates: 5
+  temperature_spread: [0.3, 0.7, 1.0]
+
+escalation:
+  max_retries: 3
+  fail_threshold: 3
+
+manifest:
+  status_values: ["pending", "in_progress", "pass", "fail", "blocked"]
+  parallel_mode_key: "parallel"
+
+logging:
+  level: "INFO"
+  file: "fireant.log"

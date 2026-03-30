@@ -44,7 +44,7 @@ class ReviewerAgent(BaseAgent):
                 return True
         return False
 
-    def execute(self, directory: Path) -> None:
+    def _execute_impl(self, directory: Path) -> None:
         prd_content = self.read_prd(directory)
         if not prd_content:
             return

@@ -4,7 +4,6 @@ from .strategist import StrategistAgent
 from .pm import PMAgent
 from .engineer import EngineerAgent
 from .reviewer import ReviewerAgent
-from .voter import VoterAgent
 
 __all__ = [
     "BaseAgent",
@@ -13,5 +12,4 @@ __all__ = [
     "PMAgent",
     "EngineerAgent",
     "ReviewerAgent",
-    "VoterAgent",
 ]

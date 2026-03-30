@@ -82,7 +82,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    config = load_config(args.config)
+    config = load_config()
 
     log_cfg = config.get("logging", {})
     setup_logging(

@@ -5,7 +5,7 @@ from typing import Optional
 
 from .base import BaseAgent
 from ..utils.config import get_escalation_config, get_parallel_config
-from ..utils.manifest import create_manifest, load_manifest, save_manifest
+from ..utils.manifest import STANDARD_FILES, create_manifest, load_manifest, save_manifest
 
 logger = logging.getLogger("fireant")
 
@@ -34,7 +34,7 @@ class StrategistAgent(BaseAgent):
             return True
         return False
 
-    def execute(self, directory: Path) -> None:
+    def _execute_impl(self, directory: Path) -> None:
         if self._has_escalation_in_children(directory):
             self._handle_escalation(directory)
         elif self._has_blocked_children(directory):
@@ -51,14 +51,7 @@ class StrategistAgent(BaseAgent):
         return len(self.get_blocked(directory)) > 0
 
     def _has_unreviewed_risk(self, directory: Path) -> bool:
-        """True if manifest exists with high-risk items that haven't been
-        converted to parallel mode yet."""
-        manifest = self.read_manifest(directory)
-        if manifest is None:
-            return False
-        for d in manifest.get("deliverables", []):
-            if d.get("risk") == "high" and d.get("mode") == "single" and d.get("status") == "pending":
-                return True
+        """Disabled - no longer spawning parallel approaches."""
         return False
 
     # ── Actions ──────────────────────────────────────────────────────
@@ -83,9 +76,7 @@ class StrategistAgent(BaseAgent):
 
             action = response.get("action", "escalate_further")
 
-            if action == "spawn_parallel":
-                self._spawn_parallel(directory, child_name, manifest)
-            elif action == "simplify":
+            if action == "simplify":
                 self._issue_change_request(child_dir, response.get("new_requirements", ""))
             elif action == "restructure":
                 logger.info(f"[strategist] Restructure requested for {child_name} — Architect re-trigger needed")
@@ -101,68 +92,32 @@ class StrategistAgent(BaseAgent):
                 ))
                 logger.info(f"[strategist] Escalated further from {directory}")
 
+            # Remove handled escalation to prevent re-triggering
+            escalation_file = child_dir / STANDARD_FILES["escalation"]
+            if escalation_file.exists():
+                escalation_file.unlink()
+                logger.debug(f"[strategist] Removed escalation.md from {child_dir}")
+
     def _handle_blocked(self, directory: Path) -> None:
-        """Handle blocked deliverables by spawning parallel approaches."""
+        """Handle blocked deliverables by escalating further."""
         manifest = self.read_manifest(directory)
         if manifest is None:
             return
 
         for d in manifest["deliverables"]:
-            if d["status"] == "blocked" and d["mode"] == "single":
-                self._spawn_parallel(directory, d["name"], manifest)
-
-    def _review_risk(self, directory: Path) -> None:
-        """Flag high-risk items for parallel execution."""
-        manifest = self.read_manifest(directory)
-        if manifest is None:
-            return
-
-        changed = False
-        for d in manifest["deliverables"]:
-            if d.get("risk") == "high" and d.get("mode") == "single" and d.get("status") == "pending":
-                self._spawn_parallel(directory, d["name"], manifest)
-                changed = True
-
-        if changed:
-            save_manifest(directory, manifest)
-
-    def _spawn_parallel(self, directory: Path, deliverable_name: str, manifest: dict) -> None:
-        """Create N competing candidate directories for a deliverable."""
-        n_candidates = self.parallel_config.get("default_candidates", 3)
-        temp_spread = self.parallel_config.get("temperature_spread", [0.3, 0.7, 1.0])
-
-        original_dir = directory / deliverable_name
-        original_prd = self.read_prd(original_dir) if original_dir.exists() else None
-
-        candidates = []
-        for i in range(n_candidates):
-            suffix = chr(ord("A") + i)
-            candidate_name = f"{deliverable_name}_{suffix}"
-            candidate_dir = directory / candidate_name
-            candidate_dir.mkdir(parents=True, exist_ok=True)
-
-            if original_prd:
-                self.write_prd(candidate_dir, original_prd)
-            child_manifest = create_manifest([])
-            candidate_temp = temp_spread[i] if i < len(temp_spread) else temp_spread[-1]
-            child_manifest["temperature"] = candidate_temp
-            self.write_manifest(candidate_dir, child_manifest)
-
-            candidates.append(candidate_name)
-
-        for d in manifest["deliverables"]:
-            if d["name"] == deliverable_name:
-                d["mode"] = "parallel"
-                d["candidates"] = candidates
-                d["status"] = "in_progress"
-                d["temperature_spread"] = temp_spread[:n_candidates]
+            if d["status"] == "blocked":
+                self.write_escalation(directory, (
+                    f"# Escalation: {d['name']}\n\n"
+                    f"Deliverable '{d['name']}' is blocked and cannot proceed.\n\n"
+                    f"Recommend simplifying requirements or restructuring.\n"
+                ))
+                logger.info(f"[strategist] Escalated blocked deliverable '{d['name']}' from {directory}")
                 break
 
-        save_manifest(directory, manifest)
-        logger.info(
-            f"[strategist] Spawned {n_candidates} parallel candidates for "
-            f"'{deliverable_name}' in {directory}"
-        )
+    def _review_risk(self, directory: Path) -> None:
+        """Disabled - no longer spawning parallel approaches."""
+        pass
+
 
     def _issue_change_request(self, target_dir: Path, new_requirements: str) -> None:
         self.write_change_request(target_dir, (
@@ -183,7 +138,7 @@ class StrategistAgent(BaseAgent):
             f"Failed child: {child_name}\n"
             f"Escalation details:\n{escalation}\n\n"
             "Return a JSON object with:\n"
-            "- \"action\": one of \"spawn_parallel\", \"simplify\", \"restructure\", \"escalate_further\"\n"
+            "- \"action\": one of \"simplify\", \"restructure\", \"escalate_further\"\n"
             "- \"reasoning\": brief explanation\n"
             "- \"new_requirements\": (only if action is \"simplify\") the simplified requirements\n"
         )

@@ -1,0 +1,71 @@
+== HARD REQUIREMENTS FOR KAPLAY WEB GAME PROJECTS ==
+
+1. PRE-CREATED FILES (DO NOT CREATE OR MODIFY)
+   - index.html — loads kaplay.js then main.js as <script type="module">.
+   - kaplay.js — symlinked Kaplay library.
+   - package.json — enables ES module imports.
+   The game must be playable by opening index.html in a browser (no build step).
+
+2. ROOT-LEVEL FILES
+   Only structure-critical orchestration files belong at the project root.
+   Typically this means ONLY main.js. All other code goes in subdirectories.
+
+   main.js responsibilities:
+   - Call `const k = kaplay({...})` using the GLOBAL kaplay function (no import needed).
+   - Import setup functions from subdirectories.
+   - Pass `k` as argument to those functions (do NOT export `k`).
+   - Register scenes and call `k.go("menu")` to start.
+   - main.js is the LAST file generated (all subdirs are built first).
+
+   Example main.js pattern:
+     import { registerScenes } from "./scenes/scenes.js";
+     const k = kaplay({ width: 800, height: 600, background: [0, 0, 0] });
+     registerScenes(k);
+     k.go("menu");
+
+3. SUBDIRECTORY STRUCTURE
+   Put ALL game logic, config, and utilities in subdirectories.
+   Each subdirectory is an independent module with its own _prd.md and _manifest.json.
+
+   Typical layout (1-2 subdirs + main.js):
+     config/    — constants, colors, speeds, dimensions (pure data, no framework deps)
+     game/      — scenes, game objects, entity logic, UI components
+     main.js    — wires everything together
+
+   Rules:
+   - Maximum 6 files per directory, maximum 3 subdirectories.
+   - Subdirectories are generated BEFORE root-level files.
+   - Subdirectory modules are independent leaves — they export functions but do NOT
+     import from siblings or parent-level files.
+   - Sibling files in the SAME directory should NOT import from each other.
+     If they need shared logic, that logic belongs in a child subdirectory.
+
+4. DEPENDENCY GRAPH
+   Shape: a TREE, not a web. Parent imports from children, never the reverse.
+   - main.js is the root node — it imports from everything and wires the app together.
+   - Subdirectory modules export functions that receive `k` as a parameter.
+   - Order deliverables as a DAG: subdirectories first, then root files, main.js last.
+   - Prefer passing data through function arguments over shared state.
+
+5. LANGUAGE & RUNTIME
+   - All game logic in JavaScript (.js files), targeting ES2020+.
+   - Use ES module pattern: files use import/export.
+   - Always include `.js` extension in import paths.
+   - File names: lowercase (e.g. "main.js", "scenes.js", "config.js").
+   - Use Kaplay as the game framework — do NOT use raw canvas, Phaser, or other frameworks.
+   - Refer to Kaplay docs: https://kaplayjs.com/
+
+6. KAPLAY USAGE
+   - Use Kaplay's functional Entity-Component System. NO classes or deep inheritance.
+   - Game objects: k.add([k.sprite("x"), k.pos(100,200), k.area(), k.body()]).
+   - Use k.scene() for game states (menu, play, gameover).
+   - Use k.loadSprite(), k.loadSound() for assets, or k.add() with shape components.
+   - Use k.onKeyPress(), k.onKeyDown() for input. Support arrow keys and WASD.
+   - Use Kaplay's built-in game loop — do NOT use requestAnimationFrame.
+   - Use plain objects for persistent state.
+
+7. CODE STYLE
+   - Each file under 1000 lines, each function under 200 lines.
+   - One module/concern per file.
+   - Agent artifacts (_prd.md, _manifest.json, etc.) are prefixed with _ and ignored.
+   - Tests go in test/ subdirectories within each module.

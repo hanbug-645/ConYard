@@ -14,13 +14,9 @@ export default function Home() {
     
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-      console.log(`Calling API: ${apiUrl}/generate-animal`)
-      
       const response = await fetch(`${apiUrl}/generate-animal`)
       
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error(`API Error (${response.status}):`, errorText)
         throw new Error(`Failed to generate animal: ${response.status}`)
       }
       
@@ -28,7 +24,6 @@ export default function Home() {
       setAnimal(data.animal)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred'
-      console.error('Error:', errorMessage)
       setError(errorMessage)
     } finally {
       setLoading(false)

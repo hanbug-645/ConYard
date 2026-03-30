@@ -26,7 +26,7 @@ class EngineerAgent(BaseAgent):
         pending = self.get_pending(directory)
         return len(pending) > 0
 
-    def execute(self, directory: Path) -> None:
+    def _execute_impl(self, directory: Path) -> None:
         prd_content = self.read_prd(directory)
         if not prd_content:
             logger.warning(f"[engineer] No prd.md in {directory}")
@@ -40,8 +40,9 @@ class EngineerAgent(BaseAgent):
             filename = deliverable["name"]
             description = deliverable.get("description", "")
 
+            # Place code files in lib/ subdirectory
+            code_path = directory / "lib" / filename
             existing_code = None
-            code_path = directory / filename
             if code_path.exists():
                 existing_code = code_path.read_text()
 
@@ -54,11 +55,15 @@ class EngineerAgent(BaseAgent):
                 error_log=error_log if deliverable["status"] == "fail" else None,
             )
 
+            code_path.parent.mkdir(parents=True, exist_ok=True)
+            action = "edit" if existing_code else "create"
             code_path.write_text(code)
+            self.log_operation(f"file_{action}", directory, {"file": str(code_path.relative_to(directory)), "type": "code"})
 
             test_filename = self._test_filename(filename)
+            # Place test files in lib/test/ subdirectory
+            test_path = directory / "lib" / "test" / test_filename
             existing_test = None
-            test_path = directory / test_filename
             if test_path.exists():
                 existing_test = test_path.read_text()
 
@@ -70,10 +75,13 @@ class EngineerAgent(BaseAgent):
                 existing_test=existing_test,
                 error_log=error_log if deliverable["status"] == "fail" else None,
             )
+            test_path.parent.mkdir(parents=True, exist_ok=True)
+            test_action = "edit" if existing_test else "create"
             test_path.write_text(test_code)
+            self.log_operation(f"file_{test_action}", directory, {"file": str(test_path.relative_to(directory)), "type": "test"})
 
             update_status(directory, filename, "in_progress")
-            logger.info(f"[engineer] Wrote {filename} + {test_filename} in {directory}")
+            logger.info(f"[engineer] {action.capitalize()}d {filename} + {test_action}d {test_filename} in {directory}")
 
         if review_content and (directory / "review.md").exists():
             (directory / "review.md").unlink(missing_ok=True)

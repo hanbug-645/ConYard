@@ -27,7 +27,7 @@ class PMAgent(BaseAgent):
             return True
         return False
 
-    def execute(self, directory: Path) -> None:
+    def _execute_impl(self, directory: Path) -> None:
         if self.has_change_request(directory):
             self._handle_change_request(directory)
         elif self._is_freshly_initialized(directory):
@@ -36,15 +36,34 @@ class PMAgent(BaseAgent):
     # ── Trigger checks ───────────────────────────────────────────────
 
     def _is_freshly_initialized(self, directory: Path) -> bool:
-        """All deliverables are pending and prd.md looks skeletal."""
+        """Check if this directory needs PM expansion.
+        
+        Returns True only if:
+        1. No deliverables yet (Architect just created skeleton), OR
+        2. Deliverables exist but are directory-type (not files - Architect's work)
+        
+        Returns False if deliverables are file-type (PM already ran).
+        """
         manifest = self.read_manifest(directory)
         if manifest is None:
             return False
+        
         deliverables = manifest.get("deliverables", [])
+        
+        # No deliverables yet - PM needs to run
         if not deliverables:
             prd = self.read_prd(directory)
             return prd is not None and len(prd.strip()) > 0
-        return all(d["status"] == "pending" for d in deliverables)
+        
+        # If deliverables are all directory-type, Architect created them - PM needs to run
+        # If deliverables are file-type, PM already ran - skip
+        has_files = any(d.get("type") == "file" for d in deliverables)
+        if has_files:
+            # PM already created file deliverables - don't run again
+            return False
+        
+        # All directory-type and pending - this is Architect's work, PM should run
+        return all(d["status"] == "pending" and d.get("type") == "directory" for d in deliverables)
 
     # ── Actions ──────────────────────────────────────────────────────
 

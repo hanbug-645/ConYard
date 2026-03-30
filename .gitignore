@@ -16,6 +16,9 @@ venv.bak/
 .env.local
 .env.*.local
 
+# Secrets
+secrets.yaml
+
 # Next.js
 .next/
 out/

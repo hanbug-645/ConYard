@@ -20,7 +20,6 @@ class TreeScanner:
     NEEDS_PM = "needs_pm"
     NEEDS_ENGINEER = "needs_engineer"
     NEEDS_REVIEWER = "needs_reviewer"
-    NEEDS_VOTER = "needs_voter"
     COMPLETE = "complete"
     BLOCKED = "blocked"
 
@@ -69,13 +68,6 @@ class TreeScanner:
 
         deliverables = manifest.get("deliverables", [])
 
-        # Check for parallel deliverables needing voting
-        for d in deliverables:
-            if d.get("mode") == "parallel":
-                candidates = d.get("candidates", [])
-                if candidates and self._any_candidate_done(directory, candidates):
-                    return self.NEEDS_VOTER
-
         # Check for child escalations → Strategist
         for child in directory.iterdir():
             if child.is_dir() and (child / STANDARD_FILES["escalation"]).exists():
@@ -102,49 +94,26 @@ class TreeScanner:
                 return self.NEEDS_PM
             return self.COMPLETE
 
-        if all(d["status"] == "pending" for d in deliverables):
+        # Only trigger PM if deliverables are directory-type (Architect's work)
+        # Skip if file-type deliverables exist (PM already ran)
+        has_files = any(d.get("type") == "file" for d in deliverables)
+        if not has_files and all(d["status"] == "pending" and d.get("type") == "directory" for d in deliverables):
             return self.NEEDS_PM
 
-        # Leaf node with pending/fail code deliverables → Engineer
-        subdirs = [d for d in directory.iterdir() if d.is_dir() and not d.name.startswith((".", "__"))]
-        if not subdirs:
-            if any(d["status"] in ("pending", "fail") for d in deliverables):
-                return self.NEEDS_ENGINEER
+        # Pending/fail file deliverables → Engineer (regardless of subdirs)
+        if any(d.get("type") == "file" and d["status"] in ("pending", "fail") for d in deliverables):
+            return self.NEEDS_ENGINEER
 
         # Deliverables in_progress → Reviewer
         if any(d["status"] == "in_progress" for d in deliverables):
-            if any(d["status"] == "in_progress" and (directory / d["name"]).exists() for d in deliverables):
+            # Check both direct path and lib/ subdirectory (Engineer writes to lib/)
+            if any(d["status"] == "in_progress" and 
+                   ((directory / d["name"]).exists() or (directory / "lib" / d["name"]).exists())
+                   for d in deliverables):
                 return self.NEEDS_REVIEWER
 
-        # All passed
-        if all(d["status"] == "pass" for d in deliverables):
+        # All file deliverables passed
+        if has_files and all(d.get("type") != "file" or d["status"] == "pass" for d in deliverables):
             return self.COMPLETE
 
         return self.COMPLETE
-
-    def _any_candidate_done(self, directory: Path, candidates: list[str]) -> bool:
-        """Check if any candidate has finished (pass or all terminated)."""
-        for c in candidates:
-            cdir = directory / c
-            if (cdir / STANDARD_FILES["status_pass"]).exists():
-                return True
-        # Check if all terminated
-        all_done = True
-        for c in candidates:
-            cdir = directory / c
-            if not cdir.exists():
-                continue
-            if (cdir / STANDARD_FILES["status_pass"]).exists():
-                continue
-            if (cdir / STANDARD_FILES["escalation"]).exists():
-                continue
-            cm = load_manifest(cdir)
-            if cm:
-                statuses = {d["status"] for d in cm.get("deliverables", [])}
-                if statuses - {"pass", "blocked", "fail"}:
-                    all_done = False
-                    break
-            else:
-                all_done = False
-                break
-        return all_done

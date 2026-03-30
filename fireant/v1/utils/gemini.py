@@ -1,9 +1,30 @@
+import logging
+import threading
 from typing import Optional
 
 from google import genai
 from google.genai import types
 
 from .config import get_agent_config, load_config
+
+logger = logging.getLogger("fireant")
+
+# Global semaphore to limit concurrent LLM calls
+_llm_semaphore: Optional[threading.Semaphore] = None
+_semaphore_lock = threading.Lock()
+
+
+def _get_llm_semaphore() -> threading.Semaphore:
+    """Get or create the global LLM call semaphore."""
+    global _llm_semaphore
+    if _llm_semaphore is None:
+        with _semaphore_lock:
+            if _llm_semaphore is None:
+                config = load_config()
+                max_concurrent = config.get("gemini", {}).get("max_concurrent_llm_calls", 10)
+                _llm_semaphore = threading.Semaphore(max_concurrent)
+                logger.info(f"[LLM Gateway] Initialized with max_concurrent_llm_calls={max_concurrent}")
+    return _llm_semaphore
 
 
 class GeminiClient:
@@ -38,18 +59,37 @@ class GeminiClient:
         if context:
             contents.append(f"<context>\n{context}\n</context>\n\n")
         contents.append(prompt)
+        contents.append("\n\n**CRITICAL: Your response MUST be under 500 words. Be extremely concise.**")
 
-        response = self.client.models.generate_content(
-            model=self.agent_config["model"],
-            contents="".join(contents),
-            config=types.GenerateContentConfig(
-                system_instruction=self.agent_config["system_prompt"],
-                temperature=temp,
-                max_output_tokens=self.agent_config["max_output_tokens"],
-                top_p=self.agent_config["top_p"],
-            ),
+        full_prompt = "".join(contents)
+        logger.info(
+            f"[LLM] {self.role} | temp={temp:.1f} | "
+            f"prompt_len={len(full_prompt)} chars | "
+            f"preview: {full_prompt[:100].replace(chr(10), ' ')}..."
         )
-        return response.text
+
+        # Acquire semaphore to limit concurrent calls
+        semaphore = _get_llm_semaphore()
+        with semaphore:
+            logger.debug(f"[LLM Gateway] {self.role} acquired slot")
+            response = self.client.models.generate_content(
+                model=self.agent_config["model"],
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.agent_config["system_prompt"],
+                    temperature=temp,
+                    max_output_tokens=self.agent_config["max_output_tokens"],
+                    top_p=self.agent_config["top_p"],
+                ),
+            )
+
+            response_text = response.text
+            logger.info(
+                f"[LLM] {self.role} | response_len={len(response_text)} chars | "
+                f"preview: {response_text[:100].replace(chr(10), ' ')}..."
+            )
+            logger.debug(f"[LLM Gateway] {self.role} released slot")
+            return response_text
 
     def generate_json(
         self,
@@ -64,17 +104,35 @@ class GeminiClient:
         if context:
             contents.append(f"<context>\n{context}\n</context>\n\n")
         contents.append(prompt)
-        contents.append("\n\nRespond with valid JSON only. No markdown fences.")
+        contents.append("\n\n**CRITICAL: Response MUST be under 500 words AND valid JSON only. No markdown fences. Be extremely concise.**")
 
-        response = self.client.models.generate_content(
-            model=self.agent_config["model"],
-            contents="".join(contents),
-            config=types.GenerateContentConfig(
-                system_instruction=self.agent_config["system_prompt"],
-                temperature=temp,
-                max_output_tokens=self.agent_config["max_output_tokens"],
-                top_p=self.agent_config["top_p"],
-                response_mime_type="application/json",
-            ),
+        full_prompt = "".join(contents)
+        logger.info(
+            f"[LLM-JSON] {self.role} | temp={temp:.1f} | "
+            f"prompt_len={len(full_prompt)} chars | "
+            f"preview: {full_prompt[:100].replace(chr(10), ' ')}..."
         )
-        return response.text
+
+        # Acquire semaphore to limit concurrent calls
+        semaphore = _get_llm_semaphore()
+        with semaphore:
+            logger.debug(f"[LLM Gateway] {self.role} acquired slot (JSON)")
+            response = self.client.models.generate_content(
+                model=self.agent_config["model"],
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=self.agent_config["system_prompt"],
+                    temperature=temp,
+                    max_output_tokens=self.agent_config["max_output_tokens"],
+                    top_p=self.agent_config["top_p"],
+                    response_mime_type="application/json",
+                ),
+            )
+
+            response_text = response.text
+            logger.info(
+                f"[LLM-JSON] {self.role} | response_len={len(response_text)} chars | "
+                f"preview: {response_text[:100].replace(chr(10), ' ')}..."
+            )
+            logger.debug(f"[LLM Gateway] {self.role} released slot (JSON)")
+            return response_text

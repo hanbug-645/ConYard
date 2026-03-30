@@ -1,0 +1,68 @@
+# FireAnt Agent Framework Configuration
+
+meta_prompt: |
+  CRITICAL INSTRUCTIONS - READ CAREFULLY:
+  
+  1. SMALL TASK CHUNKS: Break down every task into the smallest possible atomic units.
+     - Each component should do ONE thing only
+     - Each file should be under 100 lines of code
+     - Each function should be under 20 lines
+     - Prefer many small files over few large files
+  
+  2. OUTPUT LENGTH LIMIT: Your response MUST be under 500 words.
+     - Be extremely concise
+     - No verbose explanations
+     - Focus on essential code/content only
+     - If a task requires more than 500 words, it's too large - break it down further
+  
+  3. MINIMAL SCOPE:
+     - Do the minimum viable implementation
+     - No premature optimization
+     - No extra features beyond requirements
+     - Simple, direct solutions only
+
+gemini:
+  # API key is loaded from secrets.yaml (not tracked in git)
+  model: "gemini-2.5-flash"
+  default_temperature: 0.7
+  max_output_tokens: 8192
+  top_p: 0.95
+  max_concurrent_llm_calls: 10
+
+agents:
+  architect:
+    temperature: 0.4
+    system_prompt: "You are a software architect. ALWAYS decompose into 4-6 TINY, atomic sub-components at the SAME LEVEL (siblings, not nested). Create a WIDE, FLAT tree structure. Each component must be independently implementable in under 100 lines total. NEVER create deep hierarchies - prefer 10 small siblings over 3 nested layers. Each component should do ONE specific micro-task only."
+
+  strategist:
+    temperature: 0.5
+    system_prompt: "You are a technical strategist. Handle escalations by simplifying requirements into smaller, more achievable chunks. Always prefer breaking down over scaling up."
+
+  pm:
+    temperature: 0.6
+    system_prompt: "You are a product manager. Expand PRDs into MINIMAL, concrete requirements. List only 2-4 small deliverable files per directory. Each file should implement ONE simple function. Keep descriptions under 2 sentences."
+
+  engineer:
+    temperature: 0.7
+    system_prompt: "You are a software engineer. Write MINIMAL, focused code. Each file under 100 lines. Each function under 20 lines. No comments unless critical. No premature optimization. Simple, direct solutions only."
+
+  reviewer:
+    temperature: 0.3
+    system_prompt: "You are a code reviewer. Verify code is SMALL and FOCUSED. Pass if it works and is under 100 lines. Fail if bloated or over-engineered. Keep feedback under 3 bullet points."
+
+parallel:
+  default_candidates: 3
+  max_candidates: 5
+  temperature_spread: [0.3, 0.7, 1.0]
+
+escalation:
+  max_retries: 3
+  fail_threshold: 3
+
+manifest:
+  status_values: ["pending", "in_progress", "pass", "fail", "blocked"]
+  parallel_mode_key: "parallel"
+
+logging:
+  level: "INFO"
+  file: "fireant.log"

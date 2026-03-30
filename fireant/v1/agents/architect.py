@@ -30,7 +30,7 @@ class ArchitectAgent(BaseAgent):
             return False
         return True
 
-    def execute(self, directory: Path) -> None:
+    def _execute_impl(self, directory: Path) -> None:
         prd_content = self.read_prd(directory)
         if not prd_content:
             logger.warning(f"[architect] Empty prd.md in {directory}")
@@ -68,12 +68,17 @@ class ArchitectAgent(BaseAgent):
         Returns a list of dicts with keys: name, description, risk.
         """
         prompt = (
-            "Decompose the following PRD into modular sub-components.\n"
-            "Each component should be a directory that can be developed independently.\n\n"
+            "Decompose the following PRD into 4-6 TINY, atomic sub-components.\n\n"
+            "CRITICAL RULES:\n"
+            "1. Create a WIDE, FLAT structure - all components at the SAME LEVEL (siblings)\n"
+            "2. NEVER create nested hierarchies - prefer many small siblings\n"
+            "3. Each component must be implementable in under 100 lines TOTAL\n"
+            "4. Each component does ONE micro-task only (e.g., 'render-snake', 'detect-collision', 'handle-input')\n"
+            "5. Break down into the SMALLEST possible units\n\n"
             "Return a JSON array where each element has:\n"
-            "- \"name\": a short, lowercase, slug-style directory name (e.g. \"auth\", \"frontend\", \"database\")\n"
-            "- \"description\": a 2-3 sentence description of what this component is responsible for\n"
-            "- \"risk\": \"low\", \"medium\", or \"high\" based on complexity and ambiguity\n\n"
+            "- \"name\": ultra-specific, lowercase, slug name (e.g. \"snake-movement\", \"food-spawner\", \"score-tracker\")\n"
+            "- \"description\": ONE sentence describing the single micro-task\n"
+            "- \"risk\": \"low\" (default), \"medium\" (if requires external deps), or \"high\" (if ambiguous)\n\n"
             f"PRD:\n{prd_content}"
         )
 

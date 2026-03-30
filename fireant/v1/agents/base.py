@@ -1,10 +1,13 @@
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from ..utils.config import load_config
 from ..utils.gemini import GeminiClient
+
+if TYPE_CHECKING:
+    from ..utils.operation_log import OperationLogger
 from ..utils.manifest import (
     STANDARD_FILES,
     all_passed,
@@ -37,6 +40,16 @@ class BaseAgent(ABC):
         self.config = load_config()
         self.llm = GeminiClient(role=self.role, temperature_override=temperature_override)
         self.temperature_override = temperature_override
+        self.operation_logger: Optional['OperationLogger'] = None
+
+    def set_operation_logger(self, logger: 'OperationLogger') -> None:
+        """Set the operation logger for this agent."""
+        self.operation_logger = logger
+
+    def log_operation(self, action: str, directory: Path, details: Optional[dict] = None) -> None:
+        """Log an operation if operation_logger is set."""
+        if self.operation_logger:
+            self.operation_logger.log(self.role, action, str(directory), details)
 
     # ── Trigger & Action (subclasses implement) ──────────────────────
 
@@ -45,9 +58,19 @@ class BaseAgent(ABC):
         """Return True if this agent's activation condition is met in the directory."""
         ...
 
-    @abstractmethod
     def execute(self, directory: Path) -> None:
-        """Perform the agent's action on the given directory."""
+        """Execute this agent's action with automatic start/end logging."""
+        self.log_operation("start", directory)
+        try:
+            self._execute_impl(directory)
+            self.log_operation("end", directory, {"status": "success"})
+        except Exception as e:
+            self.log_operation("end", directory, {"status": "error", "error": str(e)})
+            raise
+
+    @abstractmethod
+    def _execute_impl(self, directory: Path) -> None:
+        """Execute this agent's action in the directory. Subclasses implement this."""
         ...
 
     def run(self, directory: Path) -> bool:

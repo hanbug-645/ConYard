@@ -5,12 +5,12 @@ from typing import Optional
 
 from .scanner import TreeScanner
 from ..utils.manifest import load_manifest, rollup_tree
+from ..utils.operation_log import OperationLogger
 from ..agents.architect import ArchitectAgent
 from ..agents.strategist import StrategistAgent
 from ..agents.pm import PMAgent
 from ..agents.engineer import EngineerAgent
 from ..agents.reviewer import ReviewerAgent
-from ..agents.voter import VoterAgent
 
 logger = logging.getLogger("fireant")
 
@@ -38,7 +38,6 @@ class Pipeline:
         TreeScanner.NEEDS_PM,
         TreeScanner.NEEDS_ENGINEER,
         TreeScanner.NEEDS_REVIEWER,
-        TreeScanner.NEEDS_VOTER,
     ]
 
     def __init__(self, max_iterations: int = 50, poll_interval: float = 1.0):
@@ -46,30 +45,22 @@ class Pipeline:
         self.poll_interval = poll_interval
         self.scanner = TreeScanner()
 
-        # Default agent instances (no temperature override)
-        self._default_agents = {
+        # Agent instances
+        self.agents = {
             TreeScanner.NEEDS_ARCHITECT: ArchitectAgent(),
             TreeScanner.NEEDS_STRATEGIST_RISK: StrategistAgent(),
             TreeScanner.NEEDS_STRATEGIST_ESCALATION: StrategistAgent(),
             TreeScanner.NEEDS_PM: PMAgent(),
             TreeScanner.NEEDS_ENGINEER: EngineerAgent(),
             TreeScanner.NEEDS_REVIEWER: ReviewerAgent(),
-            TreeScanner.NEEDS_VOTER: VoterAgent(),
         }
-
-        # Agent class lookup for creating temperature-overridden instances
-        self._agent_classes = {
-            TreeScanner.NEEDS_ARCHITECT: ArchitectAgent,
-            TreeScanner.NEEDS_STRATEGIST_RISK: StrategistAgent,
-            TreeScanner.NEEDS_STRATEGIST_ESCALATION: StrategistAgent,
-            TreeScanner.NEEDS_PM: PMAgent,
-            TreeScanner.NEEDS_ENGINEER: EngineerAgent,
-            TreeScanner.NEEDS_REVIEWER: ReviewerAgent,
-            TreeScanner.NEEDS_VOTER: VoterAgent,
-        }
-
-        # Cache for temperature-specific agent instances: (state, temp) → agent
-        self._temp_agent_cache: dict[tuple[str, float], object] = {}
+        
+        # Cache of completed directories to skip in future scans
+        self._completed_dirs: set[Path] = set()
+        
+        # Track consecutive errors per directory to avoid endless retries
+        self._error_counts: dict[Path, int] = {}
+        self._max_consecutive_errors = 3
 
     def run(self, project_root: Path) -> bool:
         """Run the pipeline until the project is complete or iterations exhausted.
@@ -78,6 +69,11 @@ class Pipeline:
         """
         logger.info(f"[pipeline] Starting on {project_root} (max {self.max_iterations} iterations)")
 
+        # Initialize operation logger for this project
+        op_logger = OperationLogger(project_root)
+        for agent in self.agents.values():
+            agent.set_operation_logger(op_logger)
+
         for iteration in range(1, self.max_iterations + 1):
             # Roll up child statuses to parent manifests (bottom-up)
             rollup_tree(project_root)
@@ -85,10 +81,17 @@ class Pipeline:
             scan_results = self.scanner.scan(project_root)
 
             # Separate actionable from terminal states
+            # Skip directories we've already marked as complete
             actionable = [
                 (d, state) for d, state in scan_results
                 if state not in (TreeScanner.COMPLETE, TreeScanner.BLOCKED)
+                and d not in self._completed_dirs
             ]
+            
+            # Update completed dirs cache
+            for d, state in scan_results:
+                if state == TreeScanner.COMPLETE:
+                    self._completed_dirs.add(d)
 
             # Check if root is complete
             root_state = next(
@@ -118,22 +121,31 @@ class Pipeline:
             dispatched = 0
             for priority_state in self.DISPATCH_ORDER:
                 dirs_for_state = [d for d, state in actionable if state == priority_state]
-                if not dirs_for_state or priority_state not in self._default_agents:
+                if not dirs_for_state or priority_state not in self.agents:
                     continue
 
+                agent = self.agents[priority_state]
                 for directory in dirs_for_state:
-                    dispatch_agent = self._get_agent(priority_state, directory)
                     logger.info(
                         f"[pipeline] Iteration {iteration}: "
-                        f"dispatching {dispatch_agent.role} → {directory}"
+                        f"dispatching {agent.role} → {directory}"
                     )
+                    # Skip directories that have failed too many times consecutively
+                    if self._error_counts.get(directory, 0) >= self._max_consecutive_errors:
+                        if directory not in self._completed_dirs:
+                            logger.warning(f"[pipeline] Skipping {directory} after {self._max_consecutive_errors} consecutive errors")
+                            self._completed_dirs.add(directory)
+                        continue
+
                     try:
-                        dispatch_agent.execute(directory)
+                        agent.execute(directory)
                         dispatched += 1
+                        self._error_counts.pop(directory, None)  # Reset on success
                     except Exception as e:
+                        self._error_counts[directory] = self._error_counts.get(directory, 0) + 1
                         logger.error(
-                            f"[pipeline] {dispatch_agent.role} failed on {directory}: {e}",
-                            exc_info=True,
+                            f"[pipeline] {agent.role} failed on {directory} "
+                            f"(attempt {self._error_counts[directory]}/{self._max_consecutive_errors}): {e}",
                         )
 
             if dispatched == 0:
@@ -144,27 +156,6 @@ class Pipeline:
 
         logger.warning(f"[pipeline] Reached max iterations ({self.max_iterations})")
         return False
-
-    def _get_agent(self, state: str, directory: Path):
-        """Return an agent for the given state and directory.
-
-        If the directory's manifest.json contains a 'temperature' field
-        (set by the Strategist for parallel candidate dirs), return a
-        temperature-overridden agent instance. Otherwise return the default.
-        """
-        manifest = load_manifest(directory)
-        if manifest and "temperature" in manifest:
-            temp = manifest["temperature"]
-            cache_key = (state, temp)
-            if cache_key not in self._temp_agent_cache:
-                agent_class = self._agent_classes.get(state)
-                if agent_class:
-                    self._temp_agent_cache[cache_key] = agent_class(temperature_override=temp)
-                    logger.info(f"[pipeline] Created {agent_class.__name__} with temperature={temp}")
-            if cache_key in self._temp_agent_cache:
-                return self._temp_agent_cache[cache_key]
-
-        return self._default_agents[state]
 
     def _log_progress(self, iteration: int, scan_results: list) -> None:
         """Log a compact progress summary."""
