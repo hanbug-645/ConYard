@@ -124,6 +124,11 @@ class SignalStore:
         """Return set of all verified file paths."""
         return self.r.smembers(f"{self.prefix}green_files")
 
+    def remove_green(self, file_path: str) -> None:
+        """Remove a file from the green set (e.g. after deletion)."""
+        self.r.srem(f"{self.prefix}green_files", file_path)
+        logger.debug(f"[signals] Removed green: {file_path}")
+
     # ── Retry tracking ────────────────────────────────────────────────
 
     def _retry_key(self, file_path: str) -> str:
@@ -137,6 +142,23 @@ class SignalStore:
         """Get the current retry count for a file."""
         val = self.r.get(self._retry_key(file_path))
         return int(val) if val else 0
+
+    def reset_retries(self, file_path: str) -> None:
+        """Reset the retry count for a file (e.g. after deletion/re-creation)."""
+        self.r.delete(self._retry_key(file_path))
+
+    # ── Defer tracking ────────────────────────────────────────────────
+
+    def _defer_key(self, file_path: str) -> str:
+        return f"{self.prefix}defers:{file_path}"
+
+    def increment_defers(self, file_path: str) -> int:
+        """Increment and return the defer count for a task file."""
+        return self.r.incr(self._defer_key(file_path))
+
+    def reset_defers(self, file_path: str) -> None:
+        """Reset the defer count for a file."""
+        self.r.delete(self._defer_key(file_path))
 
     # ── Cleanup ──────────────────────────────────────────────────────
 

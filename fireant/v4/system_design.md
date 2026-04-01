@@ -63,11 +63,14 @@ LLM agents observe the Redis signal table and execute specific tasks based on th
 
 - **Goal:** Execute granular coding tasks as individual contractors.
 - **Trigger:** Presence of an unclaimed `task` or `fix_request` signal in Redis.
-- **Action:** 
+- **Action (Evaluate-then-Act):**
   1. Atomically claims a task from Redis.
-  2. Writes the requested code to disk, placing it in the specific `layer_n/` directory designated by the PM's task signal.
-  3. Deposits a `task_done` signal in Redis.
-- **Scope:** Code implementation only. Does **not** plan, decide what to build, determine layers, or write tests. Embarrassingly parallel (multiple Engineers run concurrently).
+  2. **Evaluates feasibility** — asks the LLM: "Can I complete this file with the current green code?"
+     - **Path A (completable):** Determines which green files are dependencies, resolves the correct layer, and writes the code.
+     - **Path B (not completable):** Identifies a missing helper, writes that smaller sub-task first, then re-queues the original task for a future iteration.
+  3. Writes the code to disk and deposits a `task_done` signal in Redis.
+  4. For `fix_request` signals, skips evaluation and goes straight to fixing.
+- **Scope:** Code implementation only. Does **not** plan at the project level or write tests. Embarrassingly parallel (multiple Engineers run concurrently).
 
 ### D. QA Engineer (Quality Assurance)
 
@@ -115,30 +118,120 @@ When a bug is introduced, the system relies on an **Executable Feedback Loop**:
 
 ---
 
-## 5. Agent Lifecycle Management
+## 5. Agent Context Building
+
+Agents receive **function/type signatures with descriptions** instead of raw code excerpts. This is more token-efficient and semantically richer than truncated file contents.
+
+### 5.1 Code Summarization (`utils/code_summary.py`)
+
+For each green file, the system extracts:
+- **JS/TS:** exported constants, function signatures (name + params), class declarations, JSDoc/comments as descriptions.
+- **Python:** `def`/`async def` signatures with type annotations, `class` declarations, docstrings as descriptions.
+
+Example output instead of 60 lines of raw code:
+```
+--- layer_1/constants.js ---
+export const TILE_SIZE = 32
+export const GRAVITY = 800
+createConfig(difficulty) — Build game config for the given difficulty level.
+```
+
+### 5.2 Layer-Aware Context Filtering
+
+When building context for code generation, the Engineer only sees files from **lower layers**:
+
+| Target layer | Context includes |
+|---|---|
+| `layer_1` | Nothing (no lower layers exist) |
+| `layer_2` | `layer_1/` files only |
+| `layer_N` | `layer_1/` through `layer_(N-1)/` |
+| Root (`""`) | **ALL** layers (root wires everything) |
+
+Files within the same layer are treated as siblings, not dependencies, and are excluded.
+
+### 5.3 Context Ordering
+
+Within the included layers, files are sorted by **layer depth descending** — highest (closest dependency) first. This puts the most relevant context at the top of the LLM prompt.
+
+### 5.4 Evaluation Context
+
+The Engineer's task evaluation step (`_evaluate_task`) uses **all** green files (unfiltered) to assess feasibility. Layer filtering is only applied during code generation.
+
+---
+
+## 6. Fault Tolerance
+
+The system is designed to recover from failures at every level without human intervention.
+
+### 6.1 File Deletion on Retry Exhaustion
+
+When a file fails QA more than `escalation.max_retries` times, the Engineer:
+1. **Deletes the file** from disk.
+2. Removes it from the green set in Redis.
+3. Resets retry and defer counters.
+
+The PM will see the file as missing in the next gap analysis and create a fresh task, potentially with a different approach.
+
+### 6.2 Defer Loop Cap
+
+When the Engineer defers a task (path B), it re-queues the original task. To prevent infinite deferral loops, the system tracks how many times each task has been deferred. After `agents.engineer.max_defer_requeues` deferrals, the Engineer **forces a completion attempt** instead of deferring again.
+
+### 6.3 PM Stall Detection
+
+The PM tracks the green file count between iterations. If no new green files appear for `fault_tolerance.pm_stall_threshold` consecutive iterations:
+1. The PM **flushes all pending** `task`, `fix_request`, and `task_done` queues.
+2. Re-runs gap analysis from scratch based on what is actually green.
+
+This breaks deadlocks caused by tasks stuck in retry loops or signals that will never be consumed.
+
+### 6.4 LLM Retry with Backoff
+
+All Gemini API calls retry up to `gemini.llm_retries` times with exponential backoff (`backoff^attempt` seconds). This handles transient failures: rate limits, timeouts, and network errors.
+
+---
+
+## 7. Configuration Philosophy
+
+All numeric constants and thresholds live in `config.yaml` so they can be tuned without code changes. This includes:
+
+| Config key | Default | Purpose |
+|---|---|---|
+| `gemini.llm_retries` | 3 | Max LLM API call retries |
+| `gemini.llm_retry_backoff` | 2.0 | Exponential backoff base (seconds) |
+| `gemini.max_concurrent_llm_calls` | 10 | Semaphore limit for parallel API calls |
+| `agents.pm.max_tasks_per_iteration` | 3 | Max tasks the PM creates per gap analysis |
+| `agents.engineer.max_defer_requeues` | 3 | Max times a task can be deferred before forcing |
+| `escalation.max_retries` | 3 | QA fix attempts before deleting the file |
+| `fault_tolerance.pm_stall_threshold` | 3 | Iterations with no progress before queue flush |
+| `workers.engineers` | 3 | Parallel Engineer threads |
+| `workers.qa_engineers` | 1 | Parallel QA threads |
+
+---
+
+## 8. Agent Lifecycle Management
 
 The lifecycle of agents — spawning and dissolving — is managed purely by the presence of signals in Redis.
 
-### 5.1 Creation and Activation
+### 8.1 Creation and Activation
 
 - **Task Availability:** An Engineer is activated when a `task` or `fix_request` signal appears in Redis.
 - **Validation Needs:** A QA Engineer is activated when a `task_done` signal appears.
 - **Continuous Planning:** The PM runs in a continuous loop, sleeping while waiting for files to reach `green` status.
 
-### 5.2 Destruction and Deactivation (Signal Decay)
+### 8.2 Destruction and Deactivation (Signal Decay)
 
 - **Task Depletion:** Once a signal is consumed, it is removed from Redis. When no signals remain, the contractor agents (Engineers and QA) dissolve or return to an idle pool.
 - **Project Completion:** When the PM's gap analysis returns zero missing features, the PM loop terminates.
 
 ---
 
-## 6. Advanced Techniques
+## 9. Advanced Techniques
 
-### 6.1 Mixture of Agents (MoA) — Parallel Contractors
+### 9.1 Mixture of Agents (MoA) — Parallel Contractors
 
 Because Engineers do not plan or depend on each other for task assignment, they function as an embarrassingly parallel workforce. Multiple Engineers can claim different `task` signals simultaneously, writing independent code files concurrently.
 
-### 6.2 Executable Feedback Loop (MetaGPT-style)
+### 9.2 Executable Feedback Loop (MetaGPT-style)
 
 Actual runtime errors act as stigmergic triggers, preventing hallucinated fixes.
 
@@ -148,7 +241,7 @@ Actual runtime errors act as stigmergic triggers, preventing hallucinated fixes.
 
 ---
 
-## 7. Design Advantages
+## 10. Design Advantages
 
 - **Acyclic Layered Dependencies:** Forcing code into `layer_1`, `layer_2`, etc. based on dependencies guarantees a strict, bottom-up DAG (Directed Acyclic Graph), preventing circular imports and making the system naturally easier to test.
 - **Atomic Task Claiming:** Redis allows Engineers to safely use `SETNX` (or similar locking) to claim tasks without race conditions.

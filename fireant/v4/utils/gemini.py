@@ -1,6 +1,7 @@
 import logging
 import re
 import threading
+import time
 from typing import Optional
 
 from google import genai
@@ -52,6 +53,10 @@ class GeminiClient:
 
         if temperature_override is not None:
             self.agent_config["temperature"] = temperature_override
+
+        gemini_cfg = config.get("gemini", {})
+        self.max_retries: int = gemini_cfg.get("llm_retries", 3)
+        self.retry_backoff: float = gemini_cfg.get("llm_retry_backoff", 2.0)
 
         self.client = genai.Client(api_key=self.agent_config["api_key"])
 
@@ -119,18 +124,40 @@ class GeminiClient:
             if response_format:
                 config_params["response_mime_type"] = response_format
 
-            response = self.client.models.generate_content(
-                model=self.agent_config["model"],
-                contents=full_prompt,
-                config=types.GenerateContentConfig(**config_params),
-            )
+            last_error = None
+            for attempt in range(1, self.max_retries + 1):
+                try:
+                    response = self.client.models.generate_content(
+                        model=self.agent_config["model"],
+                        contents=full_prompt,
+                        config=types.GenerateContentConfig(**config_params),
+                    )
 
-            response_text = response.text
-            # Strip markdown fences that LLMs sometimes wrap code in
-            response_text = _strip_markdown_fences(response_text)
-            logger.info(
-                f"{log_prefix} {self.role} | response_len={len(response_text)} chars | "
-                f"preview: {response_text[:100].replace(chr(10), ' ')}..."
-            )
-            logger.debug(f"[LLM Gateway] {self.role} released slot")
-            return response_text
+                    response_text = response.text
+                    # Strip markdown fences that LLMs sometimes wrap code in
+                    response_text = _strip_markdown_fences(response_text)
+                    logger.info(
+                        f"{log_prefix} {self.role} | response_len={len(response_text)} chars | "
+                        f"preview: {response_text[:100].replace(chr(10), ' ')}..."
+                    )
+                    logger.debug(f"[LLM Gateway] {self.role} released slot")
+                    return response_text
+
+                except Exception as e:
+                    last_error = e
+                    if attempt < self.max_retries:
+                        wait = self.retry_backoff ** attempt
+                        logger.warning(
+                            f"{log_prefix} {self.role} | attempt {attempt}/{self.max_retries} "
+                            f"failed: {e} — retrying in {wait:.1f}s"
+                        )
+                        time.sleep(wait)
+                    else:
+                        logger.error(
+                            f"{log_prefix} {self.role} | all {self.max_retries} attempts failed: {e}"
+                        )
+
+            logger.debug(f"[LLM Gateway] {self.role} released slot (after failure)")
+            raise RuntimeError(
+                f"LLM call failed after {self.max_retries} attempts: {last_error}"
+            ) from last_error

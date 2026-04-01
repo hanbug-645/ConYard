@@ -28,6 +28,8 @@ gemini:
   max_output_tokens: 8192
   top_p: 0.95
   max_concurrent_llm_calls: 10
+  llm_retries: 3
+  llm_retry_backoff: 2.0
 
 agents:
   manager:
@@ -36,10 +38,12 @@ agents:
 
   pm:
     temperature: 0.5
+    max_tasks_per_iteration: 3
     system_prompt: "You are a technical PM driving project execution. Given a PRD and the set of verified (green) source files, identify what is missing and produce granular task signals. Determine the correct dependency layer for each task. Output JSON only."
 
   engineer:
     temperature: 0.7
+    max_defer_requeues: 3
     system_prompt: "You are a Kaplay engineer. Write ONLY the assigned file. Kaplay is available globally, and project files may use ES modules. Never invent functions, properties, or dependencies not present in the contract or context. Never reference files outside context. If the contract is impossible to fulfill, output a halt JSON instead of code."
 
   qa_engineer:
@@ -49,6 +53,9 @@ agents:
 escalation:
   max_retries: 3
   fail_threshold: 3
+
+fault_tolerance:
+  pm_stall_threshold: 3     # iterations with no new green files before flushing stuck tasks
 
 redis:
   url: "redis://localhost:6379"

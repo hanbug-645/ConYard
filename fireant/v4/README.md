@@ -81,20 +81,33 @@ PM  ──[task]──>  Engineer  ──[task_done]──>  QA Engineer
 | Agent | Trigger | Responsibility |
 |---|---|---|
 | **Manager** | User command | Creates PRD, answers questions, analyzes bugs |
-| **PM** | Continuous loop | Gap analysis: PRD vs green code, pushes `task` signals |
-| **Engineer** | `task` or `fix_request` signal | Claims signal, writes code, pushes `task_done` |
+| **PM** | Continuous loop | Gap analysis: PRD vs green code, pushes `task` signals (max configurable per iteration) |
+| **Engineer** | `task` or `fix_request` signal | Evaluates feasibility → writes code or builds sub-task first |
 | **QA Engineer** | `task_done` signal | Writes + runs tests, pushes `green` or `fix_request` |
 
 ### Execution Flow
 
 1. **Manager** creates the PRD from user task + template
 2. **PM** reads PRD, identifies missing code, pushes `task` signals with layer assignments
-3. **Engineers** (parallel) claim tasks, write code into `layer_n/`, push `task_done`
+3. **Engineers** (parallel) claim tasks, **evaluate feasibility**:
+   - **Completable** → resolve dependencies + layer, write code, push `task_done`
+   - **Not completable** → build a smaller helper first, re-queue original task
 4. **QA** claims `task_done`, generates + executes tests
    - Pass → `green` signal (file verified)
    - Fail → `fix_request` signal back to Engineers
 5. **PM** sees new `green` files, re-runs gap analysis, pushes next wave of tasks
 6. **Convergence** — PM finds zero missing features, project is complete
+
+### Context Building
+
+Agents receive **function/type signatures with descriptions** instead of raw code — more token-efficient and semantically richer. Context is **layer-aware**: an Engineer working in `layer_2` only sees `layer_1/` signatures, while root (`main.js`) sees all layers. Files are sorted **highest layer first** (closest dependency at the top).
+
+### Fault Tolerance
+
+- **File deletion on retry exhaustion** — QA failures beyond `max_retries` delete the file so PM re-plans from scratch
+- **Defer loop cap** — tasks deferred more than `max_defer_requeues` times are force-attempted
+- **PM stall detection** — no new green files for N iterations triggers a queue flush and re-plan
+- **LLM retry with backoff** — transient API failures (rate limits, timeouts) retry with exponential backoff
 
 ### Layered Code Organization
 
@@ -111,13 +124,24 @@ project_root/
 
 ## Configuration
 
-Edit `config.yaml`:
+All numeric constants live in `config.yaml` — no code changes needed to tune behavior.
 
-- **`agents`** — Per-agent LLM temperature and system prompts
-- **`gemini`** — Model, token limits, concurrency
+| Section | Key | Default | Purpose |
+|---|---|---|---|
+| `gemini` | `llm_retries` | 3 | Max API call retries on transient failure |
+| `gemini` | `llm_retry_backoff` | 2.0 | Exponential backoff base (seconds) |
+| `gemini` | `max_concurrent_llm_calls` | 10 | Parallel API call limit |
+| `agents.pm` | `max_tasks_per_iteration` | 3 | Max tasks PM creates per gap analysis |
+| `agents.engineer` | `max_defer_requeues` | 3 | Max task deferrals before forcing completion |
+| `escalation` | `max_retries` | 3 | QA fix attempts before deleting the file |
+| `fault_tolerance` | `pm_stall_threshold` | 3 | Iterations with no progress before queue flush |
+| `workers` | `engineers` | 3 | Parallel Engineer threads |
+| `workers` | `qa_engineers` | 1 | Parallel QA threads |
+
+Also in `config.yaml`:
+- **`agents.*`** — Per-agent LLM temperature and system prompts
+- **`gemini`** — Model, max output tokens, top_p
 - **`redis`** — URL and key prefix
-- **`workers`** — Number of parallel Engineers and QA workers
-- **`escalation`** — Max retries before giving up
 - **`logging`** — Level and output file
 
 ## Project Structure
@@ -141,8 +165,9 @@ v4/
 │   └── runner.py           # Thread spawning, PM loop, shutdown
 └── utils/
     ├── config.py           # YAML config + secrets loader
-    ├── signals.py          # Redis signal store (push/claim/peek)
-    ├── gemini.py           # Gemini API wrapper with concurrency control
+    ├── signals.py          # Redis signal store (push/claim/peek/defer tracking)
+    ├── gemini.py           # Gemini API wrapper with concurrency + retry
+    ├── code_summary.py     # Signature extraction for agent context
     └── operation_log.py    # JSONL operation logging
 ```
 

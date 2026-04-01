@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from agents.base import BaseAgent
+from utils.code_summary import summarize_file, format_summaries
 
 logger = logging.getLogger("fireant")
 
@@ -29,6 +30,12 @@ class PMAgent(BaseAgent):
     def __init__(self, project_dir: Path, **kwargs):
         super().__init__(**kwargs)
         self.project_dir = project_dir
+        pm_cfg = self.config.get("agents", {}).get("pm", {})
+        self.max_tasks_per_iteration: int = pm_cfg.get("max_tasks_per_iteration", 3)
+        ft_cfg = self.config.get("fault_tolerance", {})
+        self.stall_threshold: int = ft_cfg.get("pm_stall_threshold", 3)
+        self._stall_counter: int = 0
+        self._last_green_count: int = -1  # -1 so first iteration never counts as stall
 
     # ── Main loop ────────────────────────────────────────────────────
 
@@ -48,17 +55,47 @@ class PMAgent(BaseAgent):
                 return False
 
             green_files = self._collect_green_files()
-            green_code = self._read_green_code(green_files)
 
-            tasks = self._gap_analysis(prd, green_code)
+            # ── Stall detection ───────────────────────────────────
+            current_green = len(green_files)
+            if current_green <= self._last_green_count:
+                self._stall_counter += 1
+                logger.info(
+                    f"[pm] No new green files (stall {self._stall_counter}/{self.stall_threshold})"
+                )
+            else:
+                self._stall_counter = 0
+            self._last_green_count = current_green
+
+            if self._stall_counter >= self.stall_threshold:
+                logger.warning(
+                    f"[pm] Stall detected — {self._stall_counter} iterations with no progress. "
+                    f"Flushing pending task and fix_request queues."
+                )
+                self._flush_stuck_queues()
+                self._stall_counter = 0
+
+            green_summaries = self._summarize_green_files(green_files)
+
+            tasks = self._gap_analysis(prd, green_summaries)
+
+            # Hard cap — never exceed configured limit
+            if len(tasks) > self.max_tasks_per_iteration:
+                tasks = tasks[:self.max_tasks_per_iteration]
 
             if not tasks:
-                logger.info("[pm] Gap analysis returned 0 tasks — project complete!")
-                self.log_operation("convergence", self.project_dir, {
-                    "iteration": iteration,
-                    "green_files": len(green_files),
-                })
-                return True
+                # Hard guard: ensure main.js exists and is green before converging
+                missing_entry = self._check_entry_point(green_files)
+                if missing_entry:
+                    tasks = [missing_entry]
+                    logger.warning(f"[pm] Gap analysis returned 0 tasks but {missing_entry['file']} not green — forcing task")
+                else:
+                    logger.info("[pm] Gap analysis returned 0 tasks — project complete!")
+                    self.log_operation("convergence", self.project_dir, {
+                        "iteration": iteration,
+                        "green_files": len(green_files),
+                    })
+                    return True
 
             # Push task signals
             for task in tasks:
@@ -85,18 +122,49 @@ class PMAgent(BaseAgent):
             return []
         return sorted(self.signals.all_green_paths())
 
-    def _read_green_code(self, green_files: list[str]) -> dict[str, str]:
-        """Read the actual code content of verified files."""
-        result = {}
+    def _summarize_green_files(self, green_files: list[str]) -> str:
+        """Build a compact summary of verified files (signatures + descriptions)."""
+        summaries = {}
         for rel_path in green_files:
             full_path = self.project_dir / rel_path
-            if full_path.exists():
-                result[rel_path] = full_path.read_text()
-        return result
+            summary = summarize_file(full_path)
+            if summary:
+                summaries[rel_path] = summary
+        return format_summaries(summaries)
+
+    # ── Stall recovery ─────────────────────────────────────────────────
+
+    def _flush_stuck_queues(self) -> None:
+        """Drain pending task and fix_request queues to break a stall.
+
+        After flushing, the next gap analysis will re-plan from scratch
+        based on what is actually green.
+        """
+        for sig_type in ("task", "fix_request", "task_done"):
+            drained = 0
+            while self.signals.claim_signal(sig_type, "pm-flush") is not None:
+                drained += 1
+            if drained:
+                logger.info(f"[pm] Flushed {drained} stuck {sig_type} signals")
+        self.log_operation("stall_flush", self.project_dir, {})
+
+    # ── Entry point guard ─────────────────────────────────────────────
+
+    def _check_entry_point(self, green_files: list[str]) -> Optional[dict]:
+        """Return a forced task for main.js if it isn't green yet."""
+        entry = "main.js"
+        if entry not in green_files:
+            return {
+                "file": entry,
+                "layer": "",
+                "description": "Application entry point — imports and wires all modules together",
+                "depends_on": list(green_files),
+            }
+        return None
 
     # ── Gap analysis (LLM) ───────────────────────────────────────────
 
-    def _gap_analysis(self, prd: str, green_code: dict[str, str]) -> list[dict]:
+    def _gap_analysis(self, prd: str, green_summary: str) -> list[dict]:
         """Compare PRD requirements against verified code. Return missing tasks.
 
         Each task dict:
@@ -105,15 +173,7 @@ class PMAgent(BaseAgent):
             description: str — what this file should implement
             depends_on: list — files this depends on (must already be green)
         """
-        # Format green code for context
-        if green_code:
-            code_sections = []
-            for path, code in green_code.items():
-                preview = "\n".join(code.splitlines()[:60])
-                code_sections.append(f"=== {path} ===\n{preview}")
-            code_context = "\n\n".join(code_sections)
-        else:
-            code_context = "(no verified code yet)"
+        code_context = green_summary if green_summary else "(no verified code yet)"
 
         # Include Kaplay API reference
         api_ref = self.get_kaplay_api_reference()
@@ -124,24 +184,33 @@ class PMAgent(BaseAgent):
         prompt = (
             "You are a technical PM. Compare the PRD requirements against the "
             "verified code and identify what is STILL MISSING.\n\n"
+            "CORE PRINCIPLE — Always Do The Next Right Thing:\n"
+            "- Do NOT plan the entire project at once.\n"
+            "- Look at what exists (green code) and ask: what is the ONE next layer "
+            "of files that can be built right now?\n"
+            f"- Return at most {self.max_tasks_per_iteration} tasks per iteration — the smallest useful batch.\n"
+            "- Prefer files with ZERO unmet dependencies (leaf nodes first).\n"
+            "- If many files are missing, pick only the ones that unblock the most "
+            "downstream work.\n"
+            "- You will be called again after these tasks are done — you do not need "
+            "to plan ahead.\n\n"
             "DIRECTORY STRUCTURE RULES:\n"
-            "- Use the structure described in the PRD's Framework & Technical Requirements section.\n"
-            "- If the PRD specifies subdirectories (e.g. config/, game/), use those as the 'layer' field.\n"
-            "- If no structure is specified, use numbered layers: layer_1/, layer_2/, etc.\n"
-            "- Files with NO dependencies go in the first layer/subdirectory.\n"
-            "- Files that depend on other project files go in subsequent layers/subdirectories.\n"
+            "- ALL directories MUST be named layer_1/, layer_2/, layer_3/, etc.\n"
+            "- No other directory names are allowed (no config/, game/, utils/, etc.).\n"
+            "- Files with NO dependencies on other project files go in layer_1/.\n"
+            "- Files that depend on layer_1/ files go in layer_2/, and so on.\n"
             "- main.js goes in the project root (layer='') and is ALWAYS the LAST file created.\n"
-            "- Each directory is flat — no nesting within directories.\n\n"
+            "- Each layer is flat — no nesting within a layer directory.\n\n"
             "RULES:\n"
             "- Only create tasks for files whose dependencies are ALL already green\n"
             "- If a file depends on something not yet green, wait for the next iteration\n"
             "- Keep files small and focused (one concern per file)\n"
-            "- Maximum 6 files per directory\n"
+            "- Maximum 6 files per layer\n"
             "- If ALL requirements are satisfied by the green code, return an empty array []\n\n"
-            "Return a JSON array of task objects:\n"
-            "[{\"file\": \"filename.js\", \"layer\": \"config\", "
+            f"Return a JSON array of task objects (max {self.max_tasks_per_iteration}):\n"
+            "[{\"file\": \"filename.js\", \"layer\": \"layer_1\", "
             "\"description\": \"what to implement\", "
-            "\"depends_on\": [\"config/constants.js\"]}]\n\n"
+            "\"depends_on\": [\"layer_1/constants.js\"]}]\n\n"
             "Return [] if the project is complete."
         )
 
