@@ -8,6 +8,8 @@
 
 ## Local Development Setup
 
+The current implementation is a frontend/backend scaffold with a Gemini connectivity demo. The planned game-generation flow also includes an `engine/` folder that contains documentation and template assets for browser-playable games.
+
 ### 1. Backend Setup
 
 ```bash
@@ -64,6 +66,20 @@ gcloud auth application-default login
 4. Click "Generate Random Animal" button
 5. The frontend will call the backend, which calls Gemini API to generate an animal name
 
+## Engine Template Setup
+
+The `engine/` folder does not require a separate server process.
+
+For the MVP design:
+
+1. `engine/template_manager.py` maps a user requirement to a template manifest.
+2. `engine/template/snake/` is the first supported template folder.
+3. Each template exports one base class that generated `game.js` files extend.
+4. Template-owned supporting files live in the template's `dep/` folder.
+5. The backend packages generated `game.js`, its base class, entry, and dependencies.
+
+No additional local setup is required until the backend and frontend implement this template-loading flow.
+
 ## Cloud Run Deployment
 
 See the PRD.md for detailed deployment instructions using GitHub integration with Cloud Run.
@@ -78,6 +94,8 @@ See the PRD.md for detailed deployment instructions using GitHub integration wit
    - Backend: `GCP_PROJECT_ID`, `GCP_LOCATION`
    - Frontend: `NEXT_PUBLIC_API_URL` (pointing to backend service URL)
 4. Configure Cloud Build triggers to watch respective folders
+
+When template files become part of runtime generation, include `engine/**` in the backend deployment trigger so template updates redeploy the service that reads them.
 
 ## Environment Variables
 

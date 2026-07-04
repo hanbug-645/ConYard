@@ -1,0 +1,16 @@
+{
+  "id": "snake",
+  "name": "Snake",
+  "description": "Grid-based collecting and growing game.",
+  "routing_keywords": [
+    "snake",
+    "worm",
+    "caterpillar",
+    "grid movement",
+    "grow",
+    "food",
+    "self collision"
+  ],
+  "default": true,
+  "entry": "base.js"
+}

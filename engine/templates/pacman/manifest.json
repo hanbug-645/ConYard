@@ -1,0 +1,16 @@
+{
+  "id": "pacman",
+  "name": "PacMan",
+  "description": "Maze-chase game with pellets, ghosts, lives, and scoring.",
+  "routing_keywords": [
+    "pacman",
+    "pac-man",
+    "maze chase",
+    "pellets",
+    "ghosts",
+    "power pellet"
+  ],
+  "default": false,
+  "entry": "base.js"
+}
+

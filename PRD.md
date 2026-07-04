@@ -13,6 +13,8 @@ ConYard is an AI-native game development platform that democratizes game creatio
 
 The objective of this PRD is to define the Web IDE, a split-screen "Canvas" environment where natural language prompts are instantly transmuted into playable TypeScript games (Phaser/Babylon.js).
 
+For the MVP, ConYard will use a template-first engine rather than generating every game from scratch. User prompts are mapped to a supported game template, customized through explicit template interfaces, bundled with any template dependencies, and sent to the browser for immediate play. The first supported template is Snake.
+
 ## 2. User Personas
 ### The Visionary (Primary):
 Has a game idea but zero coding skills. Needs the AI to handle 100% of the implementation.
@@ -46,6 +48,7 @@ This is where the user inputs intent and receives feedback.
 #### FR-2.2 "Apply" Logic:
 - Unlike standard ChatGPT, code blocks are not just displayed in chat. They are automatically "piped" to the Right Panel.
 - Status Indicators: Show "Thinking...", "Coding...", "Compiling..." states clearly.
+- Template Selection: The backend must pass each game request to `engine/template_manager.py` and select a template manifest before generating browser files.
 
 #### FR-2.3 History & Rollback:
 - Users can scroll up to see previous prompts.
@@ -76,8 +79,48 @@ This is the "Artifact" area where the game comes to life. It has two modes: Prev
 - **Framework**: Next.js 14+ (App Router).
 - **State Management**: Zustand (for global Client State) + React Context.
 - **Sandboxing**: @codesandbox/sandpack-react. This is non-negotiable for handling complex dependency trees (Phaser, Babylon) entirely in the browser.
+- **Template Engine**: File-based library under `engine/template/`. The manager selects a manifest, a code agent writes one subclass file, and the backend attaches the base class and dependencies for the frontend sandbox.
 
-### 4.2 The "Streaming Parser"
+### 4.2 Game Template Engine
+
+#### MVP Template Scope:
+- The MVP supports only the Snake game template.
+- Requests that clearly match Snake, grid movement, food collection, growing bodies, or score-based arcade loops should route to `engine/template/snake/`.
+- Requests outside the supported set should either be simplified into a Snake-compatible variation or trigger a follow-up asking the user to choose a supported Snake-style game.
+
+#### Engine Folder Structure:
+```text
+/ConYard
+  ├── /engine
+  │   ├── template_manager.py
+  │   ├── template.md
+  │   ├── template_workflow.md
+  │   └── /template
+  │       └── /snake
+  │           ├── manifest.json
+  │           ├── snake_template.js
+  │           ├── default_game.js
+  │           ├── index.html
+  │           └── /dep
+```
+
+#### Template Contract:
+- Each template folder contains one stable base class file.
+- The base class contains the complete game engine and explicit extension interfaces.
+- The code agent creates one `game.js` subclass for each user request.
+- Template-specific dependency files live in the template's `dep/` folder.
+- Generated user games inherit from the template instead of being invented from scratch.
+
+#### Browser Bundle Contract:
+When a user request is processed, the backend should produce a file bundle containing:
+
+- The customized game file derived from the selected template.
+- Every required dependency file from the selected template's `dep/` folder.
+- Metadata needed by the frontend sandbox to identify the entry file.
+
+The frontend should load this bundle into the browser sandbox and render it in the Play tab.
+
+### 4.3 The "Streaming Parser"
 To achieve the "Canvas" feel, the frontend must parse the LLM stream in real-time.
 
 #### Regex Logic:
@@ -86,7 +129,7 @@ To achieve the "Canvas" feel, the frontend must parse the LLM stream in real-tim
 - On ``` closing tag (or stream end), trigger a Sandpack File Update.
 - Debounce: Update the Sandpack instance max once every 1000ms to prevent render thrashing while the AI is typing.
 
-### 4.3 Error Handling (The "Self-Healing" Loop)
+### 4.4 Error Handling (The "Self-Healing" Loop)
 - **Runtime Errors**: If the Sandpack frame throws an error, catch it via ErrorBoundary.
 - **AI Feedback**: Add a "Fix It" button next to the error log. Clicking it feeds the error stack trace back into the Chat Context as a new system prompt: "The previous code crashed with: [Error]. Fix it."
 
@@ -130,6 +173,7 @@ The ConYard project will be organized as a monorepo with the following structure
 /ConYard
   ├── /frontend      (Next.js code, package.json, Dockerfile)
   ├── /backend       (FastAPI code, requirements.txt, Dockerfile)
+  ├── /engine        (template router and game templates)
   └── README.md
 ```
 
@@ -139,7 +183,7 @@ Two separate Cloud Run services will be created, both connected to the same GitH
 #### Service A: Backend (FastAPI)
 - **Build Configuration**: Source location `/backend/Dockerfile`
 - **Ingress**: Allow unauthenticated invocations
-- **Trigger**: Watches for changes in `/backend/**`
+- **Trigger**: Watches for changes in `/backend/**` and, once template loading is implemented, `/engine/**`
 
 #### Service B: Frontend (Next.js)
 - **Build Configuration**: Source location `/frontend/Dockerfile`
@@ -155,6 +199,7 @@ Two separate Cloud Run services will be created, both connected to the same GitH
 ### 8.4 Monorepo Filtering
 - **Backend Trigger**: Included files filter set to `backend/**`
 - **Frontend Trigger**: Included files filter set to `frontend/**`
+- **Engine Trigger**: Include `engine/**` with the backend trigger when templates are read by the backend at build or runtime
 - **Purpose**: Prevents unnecessary deployments when non-code files change
 
 ---
@@ -163,3 +208,4 @@ Two separate Cloud Run services will be created, both connected to the same GitH
 | Date | Version | Changes | Author |
 |------|---------|---------|--------|
 | 2026-01-16 | 1.0 | Initial PRD creation | Hanbug |
+| 2026-06-30 | 1.1 | Added template-first engine design and Snake MVP scope | Hanbug |
