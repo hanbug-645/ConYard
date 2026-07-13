@@ -88,6 +88,30 @@ export const HOOKS = [
     default: "solid",
   },
   {
+    name: "getControlMode",
+    signature: "(score: number) => \"normal\" | \"inverted\"",
+    summary: "Direction mapping for player input at the current score.",
+    default: "normal",
+  },
+  {
+    name: "getFoodScoreValue",
+    signature: "(score: number) => number",
+    summary: "How many points the next collectible is worth.",
+    default: "1",
+  },
+  {
+    name: "getObstacleCells",
+    signature: "(score: number, board: { columns: number, rows: number }) => Array<{ x: number, y: number }>",
+    summary: "Board cells that behave as environmental hazards.",
+    default: "[]",
+  },
+  {
+    name: "getObstacleColor",
+    signature: "(score: number) => string",
+    summary: "CSS color used when drawing obstacle cells.",
+    default: "#ef476f",
+  },
+  {
     name: "getBoardDimensions",
     signature: "() => { columns: number, rows: number }",
     summary: "Number of horizontal and vertical cells on the board.",

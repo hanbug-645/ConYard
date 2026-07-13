@@ -1,0 +1,16 @@
+{
+  "id": "flappybird",
+  "name": "Flappy Bird",
+  "description": "Side-scrolling flying game with pipes, scoring, and flap controls.",
+  "routing_keywords": [
+    "flappy bird",
+    "flappy",
+    "tap to fly",
+    "flying through pipes",
+    "side scrolling bird",
+    "pipe gap"
+  ],
+  "default": false,
+  "entry": "base.js"
+}
+

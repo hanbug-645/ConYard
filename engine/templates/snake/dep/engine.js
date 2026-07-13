@@ -23,7 +23,8 @@ const COLORS = {
   gridColor: "#17283a",
   snakeBody: "#62e6a7",
   snakeHead: "#d8fff0",
-  food: "#ffcf5a"
+  food: "#ffcf5a",
+  obstacle: "#ef476f"
 };
 
 export class SnakeGame {
@@ -179,7 +180,16 @@ export class SnakeGame {
       left: { x: -1, y: 0 },
       right: { x: 1, y: 0 }
     };
-    const next = directions[name];
+    const inverted = {
+      up: "down",
+      down: "up",
+      left: "right",
+      right: "left"
+    };
+    const controlName = this.getControlMode(this.score) === "inverted"
+      ? inverted[name]
+      : name;
+    const next = directions[controlName];
     if (next.x + this.direction.x !== 0 || next.y + this.direction.y !== 0) {
       this.queuedDirection = next;
     }
@@ -206,7 +216,7 @@ export class SnakeGame {
 
     this.snake.unshift(next);
     if (this.food && next.x === this.food.x && next.y === this.food.y) {
-      this.score += 1;
+      this.score += this.#normalizeFoodScoreValue(this.getFoodScoreValue(this.score));
       this.scoreElement.textContent = this.score;
       if (this.score >= this.getTargetScore()) {
         this.finish("won");
@@ -233,7 +243,10 @@ export class SnakeGame {
     ) {
       return true;
     }
-    return this.snake.some((part) => part.x === head.x && part.y === head.y);
+    return (
+      this.snake.some((part) => part.x === head.x && part.y === head.y) ||
+      this.#getObstacleCells().some((cell) => cell.x === head.x && cell.y === head.y)
+    );
   }
 
   createFood() {
@@ -245,7 +258,11 @@ export class SnakeGame {
         }
       }
     }
-    return open[Math.floor(Math.random() * open.length)] || null;
+    const obstacles = this.#getObstacleCells();
+    const filtered = open.filter((cell) => (
+      !obstacles.some((obstacle) => obstacle.x === cell.x && obstacle.y === cell.y)
+    ));
+    return filtered[Math.floor(Math.random() * filtered.length)] || null;
   }
 
   finish(result) {
@@ -310,6 +327,8 @@ export class SnakeGame {
       );
     }
     this.context.stroke();
+
+    this.#getObstacleCells().forEach((cell) => this.#drawObstacle(cell));
 
     if (this.food) this.#drawFood();
 
@@ -380,6 +399,22 @@ export class SnakeGame {
     return "solid";
   }
 
+  getControlMode(_score) {
+    return "normal";
+  }
+
+  getFoodScoreValue(_score) {
+    return 1;
+  }
+
+  getObstacleCells(_score, _board) {
+    return [];
+  }
+
+  getObstacleColor(_score) {
+    return COLORS.obstacle;
+  }
+
   getBoardDimensions() {
     return { columns: COLUMNS, rows: ROWS };
   }
@@ -441,6 +476,25 @@ export class SnakeGame {
     this.context.fill();
   }
 
+  #drawObstacle(cell) {
+    const x = cell.x * CELL_SIZE;
+    const y = cell.y * CELL_SIZE;
+    this.context.fillStyle = this.getObstacleColor(this.score);
+    this.context.beginPath();
+    this.context.roundRect(x + 4, y + 4, CELL_SIZE - 8, CELL_SIZE - 8, 4);
+    this.context.fill();
+
+    this.context.strokeStyle = "rgba(255, 255, 255, 0.48)";
+    this.context.lineWidth = 2;
+    this.context.beginPath();
+    this.context.moveTo(x + 9, y + 9);
+    this.context.lineTo(x + CELL_SIZE - 9, y + CELL_SIZE - 9);
+    this.context.moveTo(x + CELL_SIZE - 9, y + 9);
+    this.context.lineTo(x + 9, y + CELL_SIZE - 9);
+    this.context.stroke();
+    this.context.lineWidth = 1;
+  }
+
   #escapeText(value) {
     const element = document.createElement("span");
     element.textContent = String(value);
@@ -490,6 +544,39 @@ export class SnakeGame {
       radius
     );
     this.context.fill();
+  }
+
+  #getObstacleCells() {
+    const cells = this.getObstacleCells(this.score, {
+      columns: this.board.columns,
+      rows: this.board.rows
+    });
+    if (!Array.isArray(cells)) return [];
+
+    const seen = new Set();
+    return cells.flatMap((cell) => {
+      const x = Math.floor(Number(cell?.x));
+      const y = Math.floor(Number(cell?.y));
+      const key = `${x},${y}`;
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        x < 0 ||
+        y < 0 ||
+        x >= this.board.columns ||
+        y >= this.board.rows ||
+        seen.has(key)
+      ) {
+        return [];
+      }
+      seen.add(key);
+      return [{ x, y }];
+    });
+  }
+
+  #normalizeFoodScoreValue(value) {
+    const scoreValue = Math.floor(Number(value));
+    return Number.isFinite(scoreValue) ? Math.max(1, Math.min(5, scoreValue)) : 1;
   }
 
   #normalizeBoardDimensions(dimensions) {

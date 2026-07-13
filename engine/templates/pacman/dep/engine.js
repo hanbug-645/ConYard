@@ -43,26 +43,31 @@ export class PacManGame {
     this.direction = DIRECTIONS.left;
     this.queuedDirection = this.direction;
     this.score = 0;
-    this.lives = STARTING_LIVES;
+    this.lives = this.#normalizeStartingLives(this.getStartingLives());
     this.state = "ready";
     this.timer = null;
     this.animationFrame = 0;
+    this.imageCache = new Map();
 
     this.#renderShell();
     this.#resetGame();
   }
 
   #renderShell() {
+    const title = this.getGameTitle();
+    const subtitle = this.getGameSubtitle();
+    document.title = title;
+
     this.root.innerHTML = `
       <main class="game-shell">
         <header class="game-header">
           <div>
-            <h1>PacMan</h1>
-            <p>Clear the maze. Outsmart the ghosts.</p>
+            <h1>${this.#escapeText(title)}</h1>
+            <p>${this.#escapeText(subtitle)}</p>
           </div>
           <div class="stats" aria-label="Game status">
             <div><span>Score</span><strong data-score>0</strong></div>
-            <div><span>Lives</span><strong data-lives>${STARTING_LIVES}</strong></div>
+            <div><span>Lives</span><strong data-lives>${this.lives}</strong></div>
           </div>
         </header>
         <section class="board-wrap" aria-label="PacMan game board">
@@ -141,25 +146,32 @@ export class PacManGame {
   #resetGame() {
     this.#stopTimer();
     this.score = 0;
-    this.lives = STARTING_LIVES;
+    this.lives = this.#normalizeStartingLives(this.getStartingLives());
     this.scoreElement.textContent = "0";
     this.livesElement.textContent = this.lives;
     this.#createPellets();
     this.#resetActors();
     this.state = "ready";
-    this.#showOverlay(
-      "Ready?",
-      "Eat every pellet and avoid the ghosts.",
-      "Start game"
-    );
+    this.#showOverlay("start");
     this.#draw();
   }
 
   #resetActors() {
+    const ghostColors = this.getGhostColors();
     this.player = { x: 10, y: 14 };
     this.ghosts = [
-      { x: 10, y: 8, color: COLORS.ghostOne, direction: DIRECTIONS.left },
-      { x: 10, y: 7, color: COLORS.ghostTwo, direction: DIRECTIONS.right }
+      {
+        x: 10,
+        y: 8,
+        color: ghostColors[0] || COLORS.ghostOne,
+        direction: DIRECTIONS.left
+      },
+      {
+        x: 10,
+        y: 7,
+        color: ghostColors[1] || ghostColors[0] || COLORS.ghostTwo,
+        direction: DIRECTIONS.right
+      }
     ];
     this.direction = DIRECTIONS.left;
     this.queuedDirection = this.direction;
@@ -189,14 +201,23 @@ export class PacManGame {
     if (this.state === "playing") {
       this.state = "paused";
       this.#stopTimer();
-      this.#showOverlay("Paused", "The maze is holding still.", "Resume");
+      this.#showOverlay("pause");
     } else if (this.state === "paused" || this.state === "ready") {
       this.#start();
     }
   }
 
   #setDirection(name) {
-    this.queuedDirection = DIRECTIONS[name];
+    const inverted = {
+      up: "down",
+      down: "up",
+      left: "right",
+      right: "left"
+    };
+    const controlName = this.getControlMode(this.score, this.lives) === "inverted"
+      ? inverted[name]
+      : name;
+    this.queuedDirection = DIRECTIONS[controlName];
     if (this.state === "ready") this.#start();
   }
 
@@ -217,9 +238,14 @@ export class PacManGame {
     };
     if (!this.#isWall(next.x, next.y)) this.player = next;
 
+    if (this.#isHazard(this.player.x, this.player.y)) {
+      this.#loseLife();
+      return;
+    }
+
     const pelletKey = this.#cellKey(this.player.x, this.player.y);
     if (this.pellets.delete(pelletKey)) {
-      this.score += 10;
+      this.score += this.#normalizePelletScoreValue(this.getPelletScoreValue(this.score));
       this.scoreElement.textContent = this.score;
     }
 
@@ -262,7 +288,11 @@ export class PacManGame {
         return distanceA - distanceB;
       });
 
-      const chase = Math.random() < 0.72;
+      const chaseProbability = Math.max(
+        0,
+        Math.min(1, Number(this.getGhostChaseProbability()) || 0)
+      );
+      const chase = Math.random() < chaseProbability;
       ghost.direction = chase
         ? candidates[0]
         : candidates[Math.floor(Math.random() * candidates.length)];
@@ -275,6 +305,10 @@ export class PacManGame {
     return this.ghosts.some(
       (ghost) => ghost.x === this.player.x && ghost.y === this.player.y
     );
+  }
+
+  #isHazard(x, y) {
+    return this.#getHazardCells().some((cell) => cell.x === x && cell.y === y);
   }
 
   #loseLife() {
@@ -290,27 +324,24 @@ export class PacManGame {
     this.#resetActors();
     this.state = "ready";
     this.#draw();
-    this.#showOverlay(
-      "Caught!",
-      `${this.lives} ${this.lives === 1 ? "life" : "lives"} remaining.`,
-      "Keep going"
-    );
+    this.#showOverlay("caught", { lives: this.lives });
   }
 
   #finish(result) {
     this.#stopTimer();
     this.state = result;
     this.#draw();
-    this.#showOverlay(
-      result === "won" ? "Maze cleared!" : "Game over",
-      result === "won" ? `Final score: ${this.score}` : "The ghosts got you.",
-      "Play again"
-    );
+    this.#showOverlay(result, { score: this.score });
   }
 
   #scheduleTick() {
     this.#stopTimer();
-    this.timer = window.setTimeout(() => this.#tick(), STEP_MS);
+    const requestedDelay = Number(this.getStepDelay());
+    const delay = Math.max(
+      40,
+      Math.min(500, Number.isFinite(requestedDelay) ? requestedDelay : STEP_MS)
+    );
+    this.timer = window.setTimeout(() => this.#tick(), delay);
   }
 
   #stopTimer() {
@@ -329,10 +360,11 @@ export class PacManGame {
     return verticalBar || horizontalBar;
   }
 
-  #showOverlay(title, message, action) {
-    this.overlayTitle.textContent = title;
-    this.overlayMessage.textContent = message;
-    this.actionButton.textContent = action;
+  #showOverlay(mode, context = {}) {
+    const content = this.getOverlayContent(mode, context);
+    this.overlayTitle.textContent = content.title;
+    this.overlayMessage.textContent = content.message;
+    this.actionButton.textContent = content.action;
     this.overlay.hidden = false;
   }
 
@@ -347,7 +379,7 @@ export class PacManGame {
   #draw() {
     if (!this.player) return;
 
-    this.context.fillStyle = COLORS.board;
+    this.context.fillStyle = this.getBoardBackgroundColor();
     this.context.fillRect(0, 0, COLUMNS * CELL_SIZE, ROWS * CELL_SIZE);
 
     for (let y = 0; y < ROWS; y += 1) {
@@ -358,25 +390,31 @@ export class PacManGame {
 
     this.pellets.forEach((key) => {
       const [x, y] = key.split(":").map(Number);
-      this.context.fillStyle = COLORS.pellet;
+      const style = this.getPelletStyle();
+      const radius = Math.max(1, Math.min(CELL_SIZE * 0.35, Number(style.radius) || 2.5));
+      this.context.fillStyle = style.color || COLORS.pellet;
       this.context.beginPath();
       this.context.arc(
         x * CELL_SIZE + CELL_SIZE / 2,
         y * CELL_SIZE + CELL_SIZE / 2,
-        2.5,
+        radius,
         0,
         Math.PI * 2
       );
       this.context.fill();
     });
 
+    this.#getHazardCells().forEach((cell) => this.#drawHazard(cell));
+
     this.#drawPlayer();
-    this.ghosts.forEach((ghost) => this.#drawGhost(ghost));
+    const ghostImages = this.getGhostImageUrls();
+    this.ghosts.forEach((ghost, index) => this.#drawGhost(ghost, ghostImages[index]));
   }
 
   #drawWall(x, y) {
     const inset = 2;
-    this.context.fillStyle = COLORS.wall;
+    const palette = this.getWallPalette();
+    this.context.fillStyle = palette.fill || COLORS.wall;
     this.context.beginPath();
     this.context.roundRect(
       x * CELL_SIZE + inset,
@@ -386,7 +424,7 @@ export class PacManGame {
       6
     );
     this.context.fill();
-    this.context.strokeStyle = COLORS.wallEdge;
+    this.context.strokeStyle = palette.edge || COLORS.wallEdge;
     this.context.lineWidth = 1;
     this.context.stroke();
   }
@@ -394,10 +432,18 @@ export class PacManGame {
   #drawPlayer() {
     const centerX = this.player.x * CELL_SIZE + CELL_SIZE / 2;
     const centerY = this.player.y * CELL_SIZE + CELL_SIZE / 2;
+    const imageUrl = this.getPlayerImageUrl();
+    const image = imageUrl ? this.#loadImage(imageUrl) : null;
+
+    if (image?.complete && image.naturalWidth > 0) {
+      this.#drawCellImage(this.player.x, this.player.y, image);
+      return;
+    }
+
     const mouth = this.animationFrame % 2 === 0 ? 0.2 : 0.08;
     const angle = this.direction.angle;
 
-    this.context.fillStyle = COLORS.player;
+    this.context.fillStyle = this.getPlayerColor();
     this.context.beginPath();
     this.context.moveTo(centerX, centerY);
     this.context.arc(
@@ -411,7 +457,13 @@ export class PacManGame {
     this.context.fill();
   }
 
-  #drawGhost(ghost) {
+  #drawGhost(ghost, imageUrl = null) {
+    const image = imageUrl ? this.#loadImage(imageUrl) : null;
+    if (image?.complete && image.naturalWidth > 0) {
+      this.#drawCellImage(ghost.x, ghost.y, image);
+      return;
+    }
+
     const x = ghost.x * CELL_SIZE + 4;
     const y = ghost.y * CELL_SIZE + 4;
     const size = CELL_SIZE - 8;
@@ -437,5 +489,188 @@ export class PacManGame {
   #cellKey(x, y) {
     return `${x}:${y}`;
   }
-}
 
+  getGameTitle() {
+    return "PacMan";
+  }
+
+  getGameSubtitle() {
+    return "Clear the maze. Outsmart the ghosts.";
+  }
+
+  getPlayerColor() {
+    return COLORS.player;
+  }
+
+  getPlayerImageUrl() {
+    return null;
+  }
+
+  getGhostColors() {
+    return [COLORS.ghostOne, COLORS.ghostTwo];
+  }
+
+  getGhostImageUrls() {
+    return [];
+  }
+
+  getBoardBackgroundColor() {
+    return COLORS.board;
+  }
+
+  getWallPalette() {
+    return { fill: COLORS.wall, edge: COLORS.wallEdge };
+  }
+
+  getPelletStyle() {
+    return { color: COLORS.pellet, radius: 2.5 };
+  }
+
+  getStepDelay() {
+    return STEP_MS;
+  }
+
+  getControlMode(_score, _lives) {
+    return "normal";
+  }
+
+  getPelletScoreValue(_score) {
+    return 10;
+  }
+
+  getHazardCells(_score) {
+    return [];
+  }
+
+  getHazardColor(_score) {
+    return "#ff3d71";
+  }
+
+  getStartingLives() {
+    return STARTING_LIVES;
+  }
+
+  getGhostChaseProbability() {
+    return 0.72;
+  }
+
+  getOverlayContent(mode, context = {}) {
+    const lives = Number(context.lives) || 0;
+    return {
+      start: {
+        title: "Ready?",
+        message: "Eat every pellet and avoid the ghosts.",
+        action: "Start game"
+      },
+      pause: {
+        title: "Paused",
+        message: "The maze is holding still.",
+        action: "Resume"
+      },
+      caught: {
+        title: "Caught!",
+        message: `${lives} ${lives === 1 ? "life" : "lives"} remaining.`,
+        action: "Keep going"
+      },
+      won: {
+        title: "Maze cleared!",
+        message: `Final score: ${Number(context.score) || 0}`,
+        action: "Play again"
+      },
+      lost: {
+        title: "Game over",
+        message: "The ghosts got you.",
+        action: "Play again"
+      }
+    }[mode];
+  }
+
+  #escapeText(value) {
+    const element = document.createElement("span");
+    element.textContent = String(value);
+    return element.innerHTML;
+  }
+
+  #drawHazard(cell) {
+    const x = cell.x * CELL_SIZE;
+    const y = cell.y * CELL_SIZE;
+    this.context.fillStyle = this.getHazardColor(this.score);
+    this.context.beginPath();
+    this.context.roundRect(x + 5, y + 5, CELL_SIZE - 10, CELL_SIZE - 10, 4);
+    this.context.fill();
+
+    this.context.strokeStyle = "rgba(255, 255, 255, 0.55)";
+    this.context.lineWidth = 2;
+    this.context.beginPath();
+    this.context.moveTo(x + 10, y + 10);
+    this.context.lineTo(x + CELL_SIZE - 10, y + CELL_SIZE - 10);
+    this.context.moveTo(x + CELL_SIZE - 10, y + 10);
+    this.context.lineTo(x + 10, y + CELL_SIZE - 10);
+    this.context.stroke();
+    this.context.lineWidth = 1;
+  }
+
+  #drawCellImage(cellX, cellY, image) {
+    const inset = 2;
+    const size = CELL_SIZE - inset * 2;
+    const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+    const sourceX = (image.naturalWidth - sourceSize) / 2;
+    const sourceY = (image.naturalHeight - sourceSize) / 2;
+
+    this.context.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      sourceSize,
+      sourceSize,
+      cellX * CELL_SIZE + inset,
+      cellY * CELL_SIZE + inset,
+      size,
+      size
+    );
+  }
+
+  #loadImage(url) {
+    if (this.imageCache.has(url)) {
+      return this.imageCache.get(url);
+    }
+
+    const image = new Image();
+    image.addEventListener("load", () => this.#draw(), { once: true });
+    image.src = url;
+    this.imageCache.set(url, image);
+    return image;
+  }
+
+  #getHazardCells() {
+    const cells = this.getHazardCells(this.score);
+    if (!Array.isArray(cells)) return [];
+
+    const seen = new Set();
+    return cells.flatMap((cell) => {
+      const x = Math.floor(Number(cell?.x));
+      const y = Math.floor(Number(cell?.y));
+      const key = `${x},${y}`;
+      if (
+        !Number.isFinite(x) ||
+        !Number.isFinite(y) ||
+        this.#isWall(x, y) ||
+        seen.has(key)
+      ) {
+        return [];
+      }
+      seen.add(key);
+      return [{ x, y }];
+    });
+  }
+
+  #normalizePelletScoreValue(value) {
+    const scoreValue = Math.floor(Number(value));
+    return Number.isFinite(scoreValue) ? Math.max(1, Math.min(100, scoreValue)) : 10;
+  }
+
+  #normalizeStartingLives(value) {
+    const lives = Math.floor(Number(value));
+    return Number.isFinite(lives) ? Math.max(1, Math.min(9, lives)) : STARTING_LIVES;
+  }
+}

@@ -60,6 +60,7 @@ array — the machine-readable list of every overridable method a generated
   overridable method name, signature, summary, and default. This is
   the single source of truth for what a generated `game.js` may
   override. Hooks are added iteratively per `template_workflow.md`.
+- Hook metadata may also declare ranges or allowed values when useful.
 
 ## `dep/` — private implementation
 
@@ -70,6 +71,15 @@ array — the machine-readable list of every overridable method a generated
 - Generated `game.js` files must **not** import from `dep/` directly —
   only from `../base.js`. Files inside `dep/` may be reorganized freely
   without breaking any generated game.
+
+## Mobile and vertical support
+
+Every template must be playable on a phone-sized vertical screen. The
+game area should scale to the viewport without horizontal scrolling,
+clipped controls, or text overlap. Keep the player, primary hazards,
+score, and important feedback readable in a portrait layout, with the
+main action near the center so generated games are ready for mobile play
+and short-form vertical clips.
 
 ## `example/`
 
@@ -104,3 +114,10 @@ The template folder itself is immutable per request.
 
 No code changes to `template_manager.py` are needed — templates are
 discovered by scanning the folder.
+
+## Tooling guardrails
+
+- Validation should confirm that every declared hook exists on the exported
+  class, and that examples override only declared hooks.
+- The dev server should tolerate port reuse, parallel requests, and clients
+  disconnecting before a response completes.

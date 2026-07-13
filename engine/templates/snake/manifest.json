@@ -12,5 +12,6 @@
     "self collision"
   ],
   "default": true,
+  "base_class": "SnakeGame",
   "entry": "base.js"
 }

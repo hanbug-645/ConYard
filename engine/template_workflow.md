@@ -172,6 +172,41 @@ Do not delete old files under `example/`. They serve two purposes:
   new user `game.js`. More examples of what customizations look like
   make the generator more reliable.
 
+## What mutants to generate
+
+After a template has enough hooks to prove the default game is stable,
+generate a balanced set of mutants. A mutant is not just a skin: it
+should answer the prompt, "Classic game, but what changes the emotional
+experience?"
+
+Create at least these examples for each mature template:
+
+- **10 cosmetic mutants** that prove text and style can change freely:
+  title, subtitle, overlay copy, colors, board/world styling, player
+  styling, target/enemy/food styling, UI labels, and remote image URLs
+  for characters, enemies, or environment objects. Remote image examples
+  may reuse the dog meme image already used by the Snake template.
+- **5 minor mechanic mutants** that adjust the game's viral pressure
+  without changing the core rules: tension, pace, score target, spawn
+  timing, obstacle density, enemy behavior, environment hazards, grace
+  windows, or recovery rules. Give each mechanic example enough style,
+  copy, and UI feedback that the mode is obvious while playing.
+- **3 bigger dynamic mutants** that create a new content hook:
+  surprises, easter eggs, sudden obstacles, control reversals, sabotage,
+  inverted inputs, sudden gravity changes, or other direct rule twists.
+  Do not frame these as chat/audience interaction unless the user asks
+  for that explicitly. Pair each big mechanic shift with a visible style
+  shift, such as warning colors, altered sprites, changed environment
+  styling, or panic-state UI copy.
+
+Label each example's `@demonstrates` text with the intended effect, not
+only the hook used: cosmetic identity, tension, panic, surprise,
+sabotage, recovery, or clip-worthy failure.
+
+One mutant example may combine multiple hooks. Prefer a clear, playable
+variant over a one-hook demo when the mechanic needs UI cues, pacing
+changes, copy, or style changes to make the idea legible.
+
 ## When not to add a hook
 
 - The customization has never been requested.
@@ -182,6 +217,21 @@ Do not delete old files under `example/`. They serve two purposes:
 
 Keep the core loop private inside `dep/`. Only expose values and
 well-scoped behavior extension points through `base.js`.
+
+## Iteration guardrails
+
+- Before extracting a structural value, trace every dependency it affects
+  (rendering, collision, spawning, sizing, and reset behavior).
+- Prefer small value hooks over hooks that expose canvas or engine state.
+  Validate and clamp all hook output inside `dep/`; make non-hook helpers
+  truly private.
+- Keep examples focused, then verify syntax, smoke tests, the unchanged
+  default game, and the customized browser behavior.
+- Verify phone-sized portrait layout for the base game and representative
+  mutants: no horizontal scroll, clipped controls, overlapping text, or
+  off-center primary action.
+- Remote assets need a documented source, license, cache strategy, and
+  graceful fallback.
 
 ## Adding a new template family
 
