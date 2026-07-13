@@ -3,9 +3,11 @@ steps:
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
+      - '-f'
+      - 'backend/Dockerfile'
       - '-t'
       - 'us-central1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/conyard/conyard-backend'
-      - './backend'
+      - '.'
     id: 'build-backend'
 
   # Build frontend with API URL build argument
