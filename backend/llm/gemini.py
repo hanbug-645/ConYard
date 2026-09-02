@@ -8,7 +8,6 @@ import os
 
 from google import genai
 from google.genai import types
-from vertexai.preview.generative_models import GenerationConfig, GenerativeModel
 
 from .base import LLMBackend
 
@@ -28,15 +27,15 @@ class GeminiBackend(LLMBackend):
         logger.info("GeminiBackend ready  model=%s", model_id)
 
     def call(self, prompt: str, *, temperature: float = 0.7, max_tokens: int = 4096) -> str:
-        model = GenerativeModel(self.model_id)
-        response = model.generate_content(
-            prompt,
-            generation_config=GenerationConfig(
+        response = self.client.models.generate_content(
+            model=self.model_id,
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 temperature=temperature,
                 max_output_tokens=max_tokens,
             ),
         )
-        return response.text.strip()
+        return (response.text or "").strip()
 
     def call_json(self, prompt: str, *, temperature: float = 0.1) -> dict:
         response = self.client.models.generate_content(
