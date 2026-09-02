@@ -13,10 +13,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import vertexai
-from vertexai.preview.generative_models import GenerativeModel
 
 from llm import get_llm
-from llm.prompts import edit_prompt, generation_prompt, planning_prompt
+from llm.prompts import (
+    edit_prompt,
+    edit_suggestions_prompt,
+    generation_prompt,
+    planning_prompt,
+    repair_prompt,
+    starter_prompts_prompt,
+)
 
 # Make engine/ importable when running from backend/ or repo root
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -68,17 +74,13 @@ async def health():
 # Pydantic models for /game-turn
 # ---------------------------------------------------------------------------
 
-class Message(BaseModel):
-    role: str
-    text: str
-
 class GameTurnState(BaseModel):
     template_id: Optional[str] = None
     phase: str = "new"
     summary: str = ""
     pending_question: Optional[str] = None
     generated_code: Optional[str] = None
-    recent_messages: list[Message] = []
+    interaction_id: Optional[str] = None
 
 class GameTurnRequest(BaseModel):
     message: str
@@ -92,11 +94,29 @@ class GameTurnResponse(BaseModel):
     state: GameTurnState
 
 
+class StarterPromptsResponse(BaseModel):
+    prompts: list[str]
+
+
+class EditSuggestion(BaseModel):
+    kind: str
+    text: str
+
+
+class EditSuggestionsRequest(BaseModel):
+    state: GameTurnState
+
+
+class EditSuggestionsResponse(BaseModel):
+    suggestions: list[EditSuggestion]
+
+
 # ---------------------------------------------------------------------------
 # Template manager (lazy singleton)
 # ---------------------------------------------------------------------------
 
 _tm: Optional[TemplateManager] = None
+_starter_prompts_cache: Optional[list[str]] = None
 
 def get_tm() -> TemplateManager:
     global _tm
@@ -133,9 +153,16 @@ def _build_examples_block(template: Template) -> str:
     return block
 
 
+def get_base_class(template: Template) -> str:
+    base_class = template.manifest.get("base_class")
+    if not base_class:
+        raise ValueError(f"Template {template.template_id!r} is missing manifest base_class")
+    return base_class
+
+
 def validate_game_js(game_js: str, template: Template) -> Optional[str]:
     """Returns an error string on failure, None on success."""
-    base_class = template.manifest.get("base_class", "SnakeGame")
+    base_class = get_base_class(template)
     if "```" in game_js:
         return "code contains Markdown fences"
     if 'from "./base.js"' not in game_js and "from './base.js'" not in game_js:
@@ -172,9 +199,9 @@ def build_html(template: Template, game_js: Optional[str] = None) -> str:
     base_src = re.sub(r'export const HOOKS = \[.*?\];', '', base_src, flags=re.DOTALL)
     # 4. Demote `export function` → `function`
     base_src = re.sub(r'\bexport\s+function\s+', 'function ', base_src)
-    # 5. Remove the CSS link injection inside mount() — styles are already inlined
+    # 5. Remove template stylesheet injection inside mount(); styles are already inlined.
     base_src = re.sub(
-        r'\s*if\s*\(!document\.querySelector\(\'link\[data-snake-styles\]\'\)\)\s*\{[^}]*\}',
+        r'''\s*if\s*\(!document\.querySelector\(["']link\[data-[^"']+-styles\]["']\)\)\s*\{.*?document\.head\.appendChild\(link\);\s*\}''',
         '',
         base_src,
         flags=re.DOTALL,
@@ -209,7 +236,109 @@ def build_html(template: Template, game_js: Optional[str] = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# POST /game-turn  — stateless turn handler (Steps 3 + 4: real LLM)
+# GET /starter-prompts - LLM-generated first-run ideas based on live templates
+# ---------------------------------------------------------------------------
+
+
+@app.get("/starter-prompts", response_model=StarterPromptsResponse)
+async def starter_prompts():
+    global _starter_prompts_cache
+
+    if _starter_prompts_cache is not None:
+        return StarterPromptsResponse(prompts=_starter_prompts_cache)
+
+    try:
+        registry = _build_template_registry(get_tm())
+        result = get_llm().call_json(
+            starter_prompts_prompt(registry=registry),
+            temperature=0.8,
+        )
+        raw_prompts = result.get("prompts", [])
+        prompts = [
+            prompt.strip()
+            for prompt in raw_prompts
+            if isinstance(prompt, str) and prompt.strip()
+        ]
+
+        if len(prompts) != 3:
+            raise ValueError("LLM must return exactly three starter prompts")
+
+        _starter_prompts_cache = prompts
+        return StarterPromptsResponse(prompts=prompts)
+    except Exception as exc:
+        logger.exception("starter_prompts error")
+        raise HTTPException(status_code=502, detail=f"Could not generate starter prompts: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# POST /edit-suggestions - contextual, hook-aware follow-up actions
+# ---------------------------------------------------------------------------
+
+
+@app.post("/edit-suggestions", response_model=EditSuggestionsResponse)
+async def edit_suggestions(req: EditSuggestionsRequest):
+    state = req.state
+    if state.phase != "ready" or not state.template_id or not state.generated_code:
+        raise HTTPException(status_code=400, detail="A ready game is required")
+
+    try:
+        tm = get_tm()
+        template = next(
+            (item for item in tm._templates if item.template_id == state.template_id),
+            None,
+        )
+        if template is None:
+            raise LookupError(f"Unknown template: {state.template_id}")
+
+        base_src = (template.template_dir / "base.js").read_text(encoding="utf-8")
+        hooks_match = re.search(
+            r"export const HOOKS = \[.*?\];",
+            base_src,
+            flags=re.DOTALL,
+        )
+        hooks_source = hooks_match.group(0) if hooks_match else "No hooks available."
+        variants = [
+            path.stem.removeprefix("game_")
+            for path in sorted((template.template_dir / "example").glob("game_*.js"))
+        ]
+
+        result = get_llm().call_json(
+            edit_suggestions_prompt(
+                template=template.manifest,
+                hooks_source=hooks_source,
+                variants=variants,
+                summary=state.summary,
+                generated_code=state.generated_code,
+            ),
+            temperature=0.6,
+        )
+        raw_suggestions = result.get("suggestions", [])
+        suggestions = [
+            EditSuggestion(kind=item.get("kind", ""), text=item.get("text", "").strip())
+            for item in raw_suggestions
+            if isinstance(item, dict) and isinstance(item.get("text"), str) and item.get("text", "").strip()
+        ]
+
+        edit_count = sum(item.kind == "edit" for item in suggestions)
+        complete_count = sum(item.kind == "complete" for item in suggestions)
+        if (
+            not suggestions
+            or edit_count > 3
+            or complete_count != 1
+            or any(item.kind not in {"edit", "complete"} for item in suggestions)
+        ):
+            raise ValueError("LLM returned an invalid edit suggestion set")
+
+        return EditSuggestionsResponse(suggestions=suggestions)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("edit_suggestions error")
+        raise HTTPException(status_code=502, detail=f"Could not generate edit suggestions: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# POST /game-turn - interaction-backed turn handler (Steps 3 + 4: real LLM)
 # ---------------------------------------------------------------------------
 
 
@@ -224,10 +353,8 @@ async def game_turn(req: GameTurnRequest):
         raise HTTPException(status_code=500, detail=f"Template manager error: {exc}")
 
     try:
-        registry    = _build_template_registry(tm)
-        new_recent  = (state.recent_messages + [Message(role="user", text=msg)])[-6:]
-        recent_plain = [{"role": m.role, "text": m.text} for m in state.recent_messages]
-        llm         = get_llm()
+        registry = _build_template_registry(tm)
+        llm = get_llm()
 
         # Step B: planning LLM decides action
         plan_prompt = planning_prompt(
@@ -236,13 +363,16 @@ async def game_turn(req: GameTurnRequest):
             has_game=bool(state.generated_code),
             summary=state.summary,
             pending_question=state.pending_question,
-            recent_messages=recent_plain,
             registry=registry,
         )
         try:
-            decision = llm.call_json(plan_prompt)
+            decision, interaction_id = llm.call_json_interaction(
+                plan_prompt,
+                previous_interaction_id=state.interaction_id,
+            )
         except Exception as exc:
             logger.warning("Planning LLM failed, falling back to generate: %s", exc)
+            interaction_id = None
             decision = {
                 "action": "generate",
                 "template_id": registry[0]["id"] if registry else None,
@@ -269,7 +399,25 @@ async def game_turn(req: GameTurnRequest):
                     summary=new_summary,
                     pending_question=question,
                     generated_code=state.generated_code,
-                    recent_messages=new_recent,
+                    interaction_id=interaction_id,
+                ),
+            )
+
+        if action == "inform":
+            available = "; ".join(
+                f"{item['name']} — {item['description'].rstrip('.')}" for item in registry
+            )
+            message = f"Current templates: {available}." if available else "No templates are currently installed."
+            return GameTurnResponse(
+                type="message",
+                message=message,
+                state=GameTurnState(
+                    template_id=state.template_id,
+                    phase=state.phase,
+                    summary=state.summary,
+                    pending_question=state.pending_question,
+                    generated_code=state.generated_code,
+                    interaction_id=interaction_id,
                 ),
             )
 
@@ -284,20 +432,20 @@ async def game_turn(req: GameTurnRequest):
                     summary=new_summary,
                     pending_question=None,
                     generated_code=state.generated_code,
-                    recent_messages=new_recent,
+                    interaction_id=interaction_id,
                 ),
             )
 
         # Steps D / E: generate or edit
         template   = tm.select(tmpl_id or msg)
         base_src   = (template.template_dir / "base.js").read_text(encoding="utf-8")
-        base_class = template.manifest.get("base_class", "GameBase")
+        base_class = get_base_class(template)
 
         if action == "edit" and state.generated_code:
             raw_js = llm.call(
                 edit_prompt(
                     message=msg,
-                    recent_messages=recent_plain,
+                    summary=new_summary,
                     base_class=base_class,
                     base_src=base_src,
                     generated_code=state.generated_code,
@@ -309,7 +457,6 @@ async def game_turn(req: GameTurnRequest):
                 generation_prompt(
                     message=msg,
                     summary=new_summary,
-                    recent_messages=recent_plain,
                     template_name=template.manifest.get("name", "game"),
                     base_class=base_class,
                     base_src=base_src,
@@ -322,10 +469,25 @@ async def game_turn(req: GameTurnRequest):
         game_js = re.sub(r'^```(?:javascript|js)?\s*\n?', '', raw_js, flags=re.MULTILINE)
         game_js = re.sub(r'\n?```\s*$', '', game_js, flags=re.MULTILINE).strip()
 
-        # Step F: validate
+        # Step F: validate, then give the model one targeted repair attempt.
         err = validate_game_js(game_js, template)
         if err:
-            logger.warning(f"Validation failed ({err}).\nFirst 500 chars:\n{game_js[:500]}")
+            logger.warning("Validation failed (%s). Attempting repair. First 500 chars:\n%s", err, game_js[:500])
+            repaired_js = llm.call(
+                repair_prompt(
+                    validation_error=err,
+                    base_class=base_class,
+                    base_src=base_src,
+                    generated_code=game_js,
+                ),
+                temperature=0.2,
+            )
+            game_js = re.sub(r'^```(?:javascript|js)?\s*\n?', '', repaired_js, flags=re.MULTILINE)
+            game_js = re.sub(r'\n?```\s*$', '', game_js, flags=re.MULTILINE).strip()
+            err = validate_game_js(game_js, template)
+
+        if err:
+            logger.warning("Repair validation failed (%s). First 500 chars:\n%s", err, game_js[:500])
             return GameTurnResponse(
                 type="message",
                 message=f"I had trouble generating valid code ({err}). Please try rephrasing.",
@@ -335,7 +497,7 @@ async def game_turn(req: GameTurnRequest):
                     summary=new_summary,
                     pending_question=None,
                     generated_code=state.generated_code,
-                    recent_messages=new_recent,
+                    interaction_id=interaction_id,
                 ),
             )
 
@@ -353,7 +515,7 @@ async def game_turn(req: GameTurnRequest):
                 summary=new_summary,
                 pending_question=None,
                 generated_code=game_js,
-                recent_messages=new_recent,
+                interaction_id=interaction_id,
             ),
         )
 
@@ -362,68 +524,3 @@ async def game_turn(req: GameTurnRequest):
     except Exception as exc:
         logger.exception("game_turn error")
         raise HTTPException(status_code=500, detail=str(exc))
-
-
-@app.get("/generate-animal")
-async def generate_animal():
-    """Generate a random animal name using Gemini API"""
-    logger.info("=== Generate Animal Request Started ===")
-    
-    try:
-        # Check project ID
-        if not PROJECT_ID:
-            logger.error("GCP_PROJECT_ID not set")
-            raise HTTPException(
-                status_code=500,
-                detail="GCP_PROJECT_ID environment variable not set"
-            )
-        
-        logger.info(f"Using project: {PROJECT_ID}, location: {LOCATION}")
-        
-        # Initialize model
-        logger.info("Initializing GenerativeModel with gemini-2.5-flash")
-        try:
-            model = GenerativeModel("gemini-2.5-flash")
-            logger.info("Model initialized successfully")
-        except Exception as model_error:
-            logger.error(f"Failed to initialize model: {str(model_error)}", exc_info=True)
-            raise
-        
-        # Prepare prompt
-        prompt = "Generate a single random animal name. Reply with only the animal name, nothing else."
-        logger.info(f"Prompt prepared: {prompt}")
-        
-        # Call Gemini API
-        logger.info("Calling Gemini API...")
-        try:
-            response = model.generate_content(prompt)
-            logger.info(f"API call successful. Response type: {type(response)}")
-            logger.info(f"Response object: {response}")
-        except Exception as api_error:
-            logger.error(f"Gemini API call failed: {str(api_error)}", exc_info=True)
-            raise
-        
-        # Extract text
-        try:
-            animal_name = response.text.strip()
-            logger.info(f"Successfully extracted animal name: {animal_name}")
-        except Exception as extract_error:
-            logger.error(f"Failed to extract text from response: {str(extract_error)}", exc_info=True)
-            raise
-        
-        logger.info(f"=== Generate Animal Request Completed: {animal_name} ===")
-        return {"animal": animal_name}
-    
-    except HTTPException as http_exc:
-        logger.error(f"HTTP Exception: {http_exc.detail}")
-        raise
-    except Exception as e:
-        import traceback
-        error_detail = f"Failed to generate animal: {str(e)}"
-        error_trace = traceback.format_exc()
-        logger.error(f"Unexpected error: {error_detail}")
-        logger.error(f"Traceback: {error_trace}")
-        raise HTTPException(
-            status_code=500,
-            detail=error_detail
-        )

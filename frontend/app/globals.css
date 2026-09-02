@@ -2,7 +2,88 @@
 @tailwind components;
 @tailwind utilities;
 
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+}
+
 body {
   margin: 0;
   padding: 0;
+  background: #050711;
+  font-family: "Arial Narrow", "Roboto Condensed", "Helvetica Neue", sans-serif;
+  font-synthesis: none;
+  overflow: hidden;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  color: #050711;
+  background: #67e8f9;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #070a14;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid #070a14;
+  border-radius: 0;
+  background: #293044;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #22d3ee;
+}
+
+.cyber-grid {
+  background-color: #080b16;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.035) 1px, transparent 1px),
+    radial-gradient(circle at 65% 45%, rgba(124, 58, 237, 0.13), transparent 42%);
+  background-size: 32px 32px, 32px 32px, 100% 100%;
+}
+
+.cyber-panel {
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+}
+
+.cyber-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  letter-spacing: 0.14em;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cyber-pulse {
+    animation: cyber-pulse 2.4s ease-in-out infinite;
+  }
+}
+
+@keyframes cyber-pulse {
+  0%, 100% { box-shadow: 0 0 12px rgba(34, 211, 238, 0.12); }
+  50% { box-shadow: 0 0 24px rgba(168, 85, 247, 0.22); }
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+@media (max-width: 767px) {
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
 }

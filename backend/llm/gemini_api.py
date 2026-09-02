@@ -13,7 +13,7 @@ from .base import LLMBackend
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.5-flash"
 
 
 class GeminiApiBackend(LLMBackend):
@@ -32,3 +32,37 @@ class GeminiApiBackend(LLMBackend):
             ),
         )
         return (response.text or "").strip()
+
+    def call_json(self, prompt: str, *, temperature: float = 0.1) -> dict:
+        response = self.client.models.generate_content(
+            model=self.model_id,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=1024,
+                response_mime_type="application/json",
+            ),
+        )
+        return self._parse_json((response.text or "").strip())
+
+    def call_interaction(
+        self,
+        prompt: str,
+        *,
+        previous_interaction_id: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+    ) -> tuple[str, str]:
+        params = {
+            "model": self.model_id,
+            "input": prompt,
+            "generation_config": {
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            },
+            "store": True,
+        }
+        if previous_interaction_id:
+            params["previous_interaction_id"] = previous_interaction_id
+        response = self.client.interactions.create(**params)
+        return self._interaction_result(response)

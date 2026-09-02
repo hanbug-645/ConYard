@@ -77,16 +77,17 @@ This is the "Artifact" area where the game comes to life. It has two modes: Prev
 
 ### 4.1 Architecture
 - **Framework**: Next.js 14+ (App Router).
-- **State Management**: Zustand (for global Client State) + React Context.
-- **Sandboxing**: @codesandbox/sandpack-react. This is non-negotiable for handling complex dependency trees (Phaser, Babylon) entirely in the browser.
-- **Template Engine**: File-based library under `engine/template/`. The manager selects a manifest, a code agent writes one subclass file, and the backend attaches the base class and dependencies for the frontend sandbox.
+- **State Management**: React `useState` / `useRef` (local component state for MVP; Zustand available for later phases).
+- **Game Renderer**: `<iframe srcDoc={html} sandbox="allow-scripts" />` — the backend assembles a single self-contained HTML document (engine + base class + generated game inlined) and returns it directly. No Sandpack, no Blob URLs, no server-side preview storage.
+- **LLM**: Google Gemini (`gemini-3.5-flash`) via the `google-genai` SDK. Supports both API-key auth (`GOOGLE_API_KEY`) and Vertex AI auth (`GCP_PROJECT_ID` / `GCP_LOCATION`). Conversation continuity uses Gemini's Interactions API (`previous_interaction_id`), so the frontend does not need to echo message history.
+- **Template Engine**: File-based library under `engine/templates/`. The manager selects a manifest, a code agent writes one `game.js` subclass file, and the backend inlines the base class and dependencies into a single HTML document.
 
 ### 4.2 Game Template Engine
 
 #### MVP Template Scope:
-- The MVP supports only the Snake game template.
-- Requests that clearly match Snake, grid movement, food collection, growing bodies, or score-based arcade loops should route to `engine/template/snake/`.
-- Requests outside the supported set should either be simplified into a Snake-compatible variation or trigger a follow-up asking the user to choose a supported Snake-style game.
+- The MVP supports Snake, Flappy Bird, and Pac-Man templates.
+- Requests are mapped by keyword and LLM planning to the closest installed template.
+- Requests outside the supported set trigger an `unsupported` planning action; the backend returns a friendly message suggesting the closest available template.
 
 #### Engine Folder Structure:
 ```text
@@ -94,14 +95,14 @@ This is the "Artifact" area where the game comes to life. It has two modes: Prev
   ├── /engine
   │   ├── template_manager.py
   │   ├── template.md
-  │   ├── template_workflow.md
-  │   └── /template
-  │       └── /snake
-  │           ├── manifest.json
-  │           ├── snake_template.js
-  │           ├── default_game.js
-  │           ├── index.html
-  │           └── /dep
+  │   └── /templates
+  │       ├── /snake
+  │       │   ├── manifest.json   (name, description, base_class, routing_keywords)
+  │       │   ├── base.js         (stable base class + HOOKS contract)
+  │       │   ├── /example        (few-shot reference game.js files)
+  │       │   └── /dep            (engine.js, styles.css)
+  │       ├── /flappybird
+  │       └── /pacman
 ```
 
 #### Template Contract:
@@ -120,18 +121,9 @@ When a user request is processed, the backend should produce a file bundle conta
 
 The frontend should load this bundle into the browser sandbox and render it in the Play tab.
 
-### 4.3 The "Streaming Parser"
-To achieve the "Canvas" feel, the frontend must parse the LLM stream in real-time.
-
-#### Regex Logic:
-- Detect ```typescript opening tag.
-- Capture content into a hidden buffer.
-- On ``` closing tag (or stream end), trigger a Sandpack File Update.
-- Debounce: Update the Sandpack instance max once every 1000ms to prevent render thrashing while the AI is typing.
-
-### 4.4 Error Handling (The "Self-Healing" Loop)
-- **Runtime Errors**: If the Sandpack frame throws an error, catch it via ErrorBoundary.
-- **AI Feedback**: Add a "Fix It" button next to the error log. Clicking it feeds the error stack trace back into the Chat Context as a new system prompt: "The previous code crashed with: [Error]. Fix it."
+### 4.3 Error Handling (The "Self-Healing" Loop)
+- **Validation**: Backend validates the generated `game.js` before returning it (checks imports, class extension, `mount()` call). On failure, one automated repair call is attempted before returning a friendly error to the user.
+- **AI Feedback** _(post-MVP)_: A "Fix It" button that feeds a runtime error trace back into the conversation as a new prompt.
 
 ## 5. UI/UX Wireframe Description
 
@@ -209,3 +201,4 @@ Two separate Cloud Run services will be created, both connected to the same GitH
 |------|---------|---------|--------|
 | 2026-01-16 | 1.0 | Initial PRD creation | Hanbug |
 | 2026-06-30 | 1.1 | Added template-first engine design and Snake MVP scope | Hanbug |
+| 2026-09-02 | 1.2 | Updated tech stack: iframe renderer (not Sandpack), vanilla JS engine (not Phaser/Babylon), three templates (Snake/Flappy/Pac-Man), Gemini Interactions API for conversation state | Hanbug |

@@ -11,6 +11,7 @@
     "pipe gap"
   ],
   "default": false,
+  "base_class": "FlappyBirdGame",
   "entry": "base.js"
 }
 

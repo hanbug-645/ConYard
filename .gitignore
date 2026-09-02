@@ -46,6 +46,9 @@ yarn-error.log*
 coverage/
 .pytest_cache/
 
+# Internal working / scratch docs
+frontend_backend_plan.md
+
 # Production
 *.pid
 *.seed
