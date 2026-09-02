@@ -8,7 +8,7 @@ Usage in route code:
 
 Auth / backend selection (env vars):
     GOOGLE_API_KEY   set this → uses Google AI API key (no GCP project needed)
-    LLM_MODEL_ID     model to use, default: gemini-3.5-flash
+    LLM_MODEL_ID     model to use, default: gemini-3.8-flash
     LLM_BACKEND      force backend: "gemini-api" | "gemini-vertex"
                      (auto-detected from GOOGLE_API_KEY when not set)
 """
@@ -28,7 +28,7 @@ def get_llm() -> LLMBackend:
     if _instance is None:
         api_key  = os.getenv("GOOGLE_API_KEY", "")
         backend  = os.getenv("LLM_BACKEND", "gemini-api" if api_key else "gemini-vertex")
-        model_id = os.getenv("LLM_MODEL_ID", "gemini-3.5-flash")
+        model_id = os.getenv("LLM_MODEL_ID", "gemini-3.8-flash")
 
         if backend == "gemini-api":
             if not api_key:

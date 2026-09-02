@@ -41,7 +41,7 @@ async def generate_animal():
         
         print(f"Using project: {PROJECT_ID}, location: {LOCATION}")
         
-        model = GenerativeModel("gemini-3.5-flash")
+        model = GenerativeModel("gemini-3.8-flash")
         
         prompt = "Generate a single random animal name. Reply with only the animal name, nothing else."
         

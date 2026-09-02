@@ -79,7 +79,7 @@ This is the "Artifact" area where the game comes to life. It has two modes: Prev
 - **Framework**: Next.js 14+ (App Router).
 - **State Management**: React `useState` / `useRef` (local component state for MVP; Zustand available for later phases).
 - **Game Renderer**: `<iframe srcDoc={html} sandbox="allow-scripts" />` — the backend assembles a single self-contained HTML document (engine + base class + generated game inlined) and returns it directly. No Sandpack, no Blob URLs, no server-side preview storage.
-- **LLM**: Google Gemini (`gemini-3.5-flash`) via the `google-genai` SDK. Supports both API-key auth (`GOOGLE_API_KEY`) and Vertex AI auth (`GCP_PROJECT_ID` / `GCP_LOCATION`). Conversation continuity uses Gemini's Interactions API (`previous_interaction_id`), so the frontend does not need to echo message history.
+- **LLM**: Google Gemini (`gemini-3.8-flash`) via the `google-genai` SDK. Supports both API-key auth (`GOOGLE_API_KEY`) and Vertex AI auth (`GCP_PROJECT_ID` / `GCP_LOCATION`). Conversation continuity uses Gemini's Interactions API (`previous_interaction_id`), so the frontend does not need to echo message history.
 - **Template Engine**: File-based library under `engine/templates/`. The manager selects a manifest, a code agent writes one `game.js` subclass file, and the backend inlines the base class and dependencies into a single HTML document.
 
 ### 4.2 Game Template Engine

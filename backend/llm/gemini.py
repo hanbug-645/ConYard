@@ -14,7 +14,7 @@ from .base import LLMBackend
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.5-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 
 class GeminiBackend(LLMBackend):
