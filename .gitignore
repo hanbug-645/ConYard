@@ -24,6 +24,7 @@ secrets.yaml
 out/
 build/
 dist/
+*.tsbuildinfo
 
 # IDE
 .vscode/
