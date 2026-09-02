@@ -23,7 +23,7 @@ class GeminiBackend(LLMBackend):
         self.client = genai.Client(
             vertexai=True,
             project=os.getenv("GCP_PROJECT_ID", "conyard"),
-            location=os.getenv("GCP_LOCATION", "us-central1"),
+            location="global",
         )
         logger.info("GeminiBackend ready  model=%s", model_id)
 
