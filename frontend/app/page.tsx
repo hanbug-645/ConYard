@@ -16,6 +16,7 @@ import {
 
 type ChatMessage = { role: 'user' | 'assistant'; text: string }
 type EditSuggestion = { kind: 'edit' | 'complete'; text: string }
+type StarterPrompt = { template_id: string; text: string }
 
 type GameTurnState = {
   template_id: string | null
@@ -39,23 +40,23 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 const GAME_STARTERS = [
   {
+    id: 'snake',
     name: 'Snake',
     description: 'A quick arcade classic',
-    prompt: 'Make a neon snake game with glowing food and a dark grid.',
     icon: Rat,
     accent: 'from-cyan-400/20 to-cyan-400/[0.02] text-cyan-300 border-cyan-400/30 hover:border-cyan-300/70 hover:shadow-[0_0_28px_rgba(34,211,238,0.15)]',
   },
   {
+    id: 'flappybird',
     name: 'Flappy Bird',
     description: 'One-button endless flight',
-    prompt: 'Make a cozy sunset Flappy Bird game with candy-colored pipes.',
     icon: Bird,
     accent: 'from-fuchsia-500/20 to-fuchsia-500/[0.02] text-fuchsia-300 border-fuchsia-500/30 hover:border-fuchsia-300/70 hover:shadow-[0_0_28px_rgba(217,70,239,0.15)]',
   },
   {
+    id: 'pacman',
     name: 'Pac-Man',
     description: 'A fast maze adventure',
-    prompt: 'Make a cosmic Pac-Man game with a midnight maze and colorful ghosts.',
     icon: Gamepad2,
     accent: 'from-violet-500/20 to-violet-500/[0.02] text-violet-300 border-violet-500/30 hover:border-violet-300/70 hover:shadow-[0_0_28px_rgba(139,92,246,0.15)]',
   },
@@ -70,7 +71,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const starterPromptsRequested = useRef(false)
-  const [starterPrompts, setStarterPrompts] = useState<string[]>([])
+  const [starterPrompts, setStarterPrompts] = useState<StarterPrompt[]>([])
   const [starterPromptsLoading, setStarterPromptsLoading] = useState(true)
   const [activeMobilePanel, setActiveMobilePanel] = useState<'chat' | 'preview'>('chat')
   const [chatWidth, setChatWidth] = useState(420)
@@ -93,7 +94,15 @@ export default function Home() {
 
         const data = await res.json()
         if (Array.isArray(data.prompts)) {
-          setStarterPrompts(data.prompts.filter((prompt: unknown) => typeof prompt === 'string'))
+          setStarterPrompts(
+            data.prompts.filter(
+              (prompt: unknown): prompt is StarterPrompt =>
+                typeof prompt === 'object' &&
+                prompt !== null &&
+                typeof (prompt as StarterPrompt).template_id === 'string' &&
+                typeof (prompt as StarterPrompt).text === 'string',
+            ),
+          )
         }
       } catch {
         // The composer remains fully usable when suggestions are unavailable.
@@ -286,13 +295,13 @@ export default function Home() {
                       ))
                     : starterPrompts.slice(0, 3).map(prompt => (
                         <button
-                          key={prompt}
+                          key={prompt.template_id}
                           type="button"
-                          onClick={() => sendMessage(prompt)}
+                          onClick={() => sendMessage(prompt.text)}
                           disabled={loading}
                           className="cyber-panel w-full min-h-12 border border-slate-700/80 bg-slate-900/70 hover:bg-cyan-400/[0.06] hover:border-cyan-400/50 px-3 py-2.5 text-left text-base leading-snug text-slate-300 transition-all disabled:opacity-50"
                         >
-                          {prompt}
+                          {prompt.text}
                         </button>
                       ))}
                 </div>
@@ -452,8 +461,16 @@ export default function Home() {
               <p className="text-2xl font-black uppercase tracking-tight text-slate-100">Choose your <span className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-300 to-violet-400">starting point</span></p>
               <p className="mt-1.5 text-sm text-slate-500">Start with a proven classic, then customize it through chat.</p>
               <div className="mt-7 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                {GAME_STARTERS.map(({ name, description, prompt, icon: Icon, accent }) => (
-                  <button key={name} onClick={() => sendMessage(prompt)} disabled={loading} className={`cyber-panel group border bg-gradient-to-b p-4 text-left transition duration-200 hover:-translate-y-1 disabled:opacity-50 ${accent}`}>
+                {GAME_STARTERS.map(({ id, name, description, icon: Icon, accent }) => (
+                  <button
+                    key={id}
+                    onClick={() => {
+                      const prompt = starterPrompts.find(item => item.template_id === id)
+                      if (prompt) void sendMessage(prompt.text)
+                    }}
+                    disabled={loading || !starterPrompts.some(item => item.template_id === id)}
+                    className={`cyber-panel group border bg-gradient-to-b p-4 text-left transition duration-200 hover:-translate-y-1 disabled:opacity-50 ${accent}`}
+                  >
                     <Icon size={22} className="mb-8" />
                     <p className="font-black uppercase tracking-wider text-slate-100">{name}</p>
                     <p className="mt-1 text-xs text-slate-400">{description}</p>

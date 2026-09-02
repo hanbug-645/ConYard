@@ -94,8 +94,13 @@ class GameTurnResponse(BaseModel):
     state: GameTurnState
 
 
+class StarterPrompt(BaseModel):
+    template_id: str
+    text: str
+
+
 class StarterPromptsResponse(BaseModel):
-    prompts: list[str]
+    prompts: list[StarterPrompt]
 
 
 class EditSuggestion(BaseModel):
@@ -116,7 +121,7 @@ class EditSuggestionsResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 _tm: Optional[TemplateManager] = None
-_starter_prompts_cache: Optional[list[str]] = None
+_starter_prompts_cache: Optional[list[StarterPrompt]] = None
 
 def get_tm() -> TemplateManager:
     global _tm
@@ -255,13 +260,29 @@ async def starter_prompts():
         )
         raw_prompts = result.get("prompts", [])
         prompts = [
-            prompt.strip()
-            for prompt in raw_prompts
-            if isinstance(prompt, str) and prompt.strip()
+            StarterPrompt(
+                template_id=item.get("template_id", "").strip(),
+                text=item.get("text", "").strip(),
+            )
+            for item in raw_prompts
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("template_id"), str)
+                and isinstance(item.get("text"), str)
+                and item.get("template_id", "").strip()
+                and item.get("text", "").strip()
+            )
         ]
 
-        if len(prompts) != 3:
-            raise ValueError("LLM must return exactly three starter prompts")
+        valid_ids = {item["id"] for item in registry}
+        expected_count = min(3, len(valid_ids))
+        prompt_ids = {prompt.template_id for prompt in prompts}
+        if (
+            len(prompts) != expected_count
+            or len(prompt_ids) != expected_count
+            or not prompt_ids.issubset(valid_ids)
+        ):
+            raise ValueError("LLM returned an invalid starter prompt set")
 
         _starter_prompts_cache = prompts
         return StarterPromptsResponse(prompts=prompts)
@@ -375,7 +396,7 @@ async def game_turn(req: GameTurnRequest):
             interaction_id = None
             decision = {
                 "action": "generate",
-                "template_id": registry[0]["id"] if registry else None,
+                "template_id": tm.select(msg).template_id,
                 "question": None,
                 "summary": state.summary or f"User requested: {msg}",
             }

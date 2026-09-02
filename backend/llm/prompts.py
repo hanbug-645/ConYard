@@ -14,14 +14,19 @@ def starter_prompts_prompt(*, registry: list[dict]) -> str:
 
 Return ONLY valid JSON with this exact structure:
 {{
-  "prompts": ["<request 1>", "<request 2>", "<request 3>"]
+  "prompts": [
+    {{"template_id": "<available template id>", "text": "<request>"}},
+    {{"template_id": "<available template id>", "text": "<request>"}},
+    {{"template_id": "<available template id>", "text": "<request>"}}
+  ]
 }}
 
 Rules:
 - Return exactly three distinct requests a user could submit directly
-- Keep each request under 12 words
+- Use three different template IDs from the available templates
+- When exactly three templates are available, use each template exactly once
+- Keep each request text under 12 words
 - Make every request specific, playful, and immediately understandable
-- Cover different available templates
 - Include one meaningful customization in each request
 - Do not number the requests or add explanations
 

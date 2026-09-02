@@ -15,9 +15,10 @@ Auth / backend selection (env vars):
 
 import os
 
+from google import genai
+
 from .base import LLMBackend
 from .gemini import GeminiBackend
-from .gemini_api import GeminiApiBackend
 
 _instance: LLMBackend | None = None
 
@@ -33,13 +34,19 @@ def get_llm() -> LLMBackend:
         if backend == "gemini-api":
             if not api_key:
                 raise RuntimeError("LLM_BACKEND=gemini-api but GOOGLE_API_KEY is not set")
-            _instance = GeminiApiBackend(api_key=api_key, model_id=model_id)
+            client = genai.Client(api_key=api_key)
         elif backend == "gemini-vertex":
-            _instance = GeminiBackend(model_id=model_id)
+            client = genai.Client(
+                vertexai=True,
+                project=os.getenv("GCP_PROJECT_ID", "conyard"),
+                location="global",
+            )
         else:
             raise ValueError(f"Unknown LLM_BACKEND: {backend!r}")
+
+        _instance = GeminiBackend(client=client, model_id=model_id)
 
     return _instance
 
 
-__all__ = ["LLMBackend", "GeminiBackend", "GeminiApiBackend", "get_llm"]
+__all__ = ["LLMBackend", "GeminiBackend", "get_llm"]
